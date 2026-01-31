@@ -1,0 +1,230 @@
+/* App Container */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.main-content {
+  margin-top: var(--navbar-height);
+  /* To prevent overlap with fixed navbar */
+  flex: 1;
+}
+
+/* Navbar */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--navbar-height);
+  background-color: var(--white);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  /* Slight shadow */
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navbar-container {
+  width: 90%;
+  max-width: 1200px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.navbar-logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  letter-spacing: -0.5px;
+}
+
+.navbar-links {
+  display: flex;
+  gap: 2rem;
+  align-items: center;
+}
+
+.navbar-links a {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--secondary-color);
+}
+
+.navbar-links a:hover {
+  color: var(--accent-color);
+}
+
+/* Dropdown */
+.dropdown {
+  position: relative;
+  cursor: pointer;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  /* Directly below the parent */
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--white);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  padding: 10px 0;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.2s ease-in-out;
+  border: 1px solid #f1f5f9;
+}
+
+.dropdown-menu li {
+  width: 100%;
+}
+
+.dropdown-menu a {
+  display: block;
+  padding: 10px 20px;
+  color: var(--secondary-color);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.dropdown-menu a:hover {
+  background-color: #f8fafc;
+  color: var(--accent-color);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Hero Section */
+.hero-section {
+  padding: 120px 20px 80px;
+  text-align: center;
+  background: var(--gradient-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  color: var(--text-on-dark);
+}
+
+/* Removed the radial gradient pseudo-element to match the clean linear gradient of the reference image */
+.hero-section::before {
+  display: none;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  max-width: 800px;
+}
+
+
+.hero-title {
+  font-size: 3.5rem;
+  font-weight: 800;
+  color: var(--text-on-dark);
+  line-height: 1.1;
+  margin-bottom: 1.5rem;
+  letter-spacing: -1px;
+}
+
+.hero-subtitle {
+  font-size: 1.25rem;
+  color: #bdc5d1;
+  /* Softer white for subtitle */
+  font-weight: 400;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* About Section */
+.about-section {
+  padding: 80px 20px;
+  background-color: var(--white);
+  display: flex;
+  justify-content: center;
+}
+
+.about-container {
+  max-width: 900px;
+  text-align: left;
+}
+
+.about-container h2 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.about-container p {
+  font-size: 1.1rem;
+  color: var(--secondary-color);
+  margin-bottom: 2rem;
+  line-height: 1.8;
+}
+
+/* Footer */
+.footer-section {
+  background-color: var(--footer-bg);
+  padding: 40px 20px;
+  text-align: center;
+  margin-top: auto;
+  border-top: none;
+  color: var(--text-on-dark);
+}
+
+.footer-content p {
+  color: #94a3b8;
+  /* Slate 400 */
+  font-size: 0.9rem;
+  margin: 5px 0;
+}
+
+.footer-content a {
+  color: var(--accent-color);
+  font-weight: 500;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 2.5rem;
+  }
+
+  .navbar-container {
+    flex-direction: column;
+    padding: 10px;
+  }
+
+  .navbar-links {
+    margin-top: 10px;
+    gap: 1rem;
+    font-size: 0.8rem;
+  }
+
+  .hero-section {
+    padding-top: 160px;
+    /* More space for stacked navbar */
+  }
+}

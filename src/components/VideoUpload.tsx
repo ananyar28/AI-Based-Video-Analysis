@@ -1,10 +1,32 @@
 import React, { useState } from 'react';
 import './VideoUpload.css';
 
+interface ObjectInfo {
+    count: number;
+    avg_confidence: number;
+}
+
+interface AnalysisReport {
+    status: string;
+    total_frames_analyzed: number;
+    objects_detected: Record<string, ObjectInfo>;
+    security_warnings: string[];
+    timeline: Record<string, number[]>;
+    error?: string;
+}
+
+interface UploadResponse {
+    id: number;
+    filename: string;
+    status: string;
+    report: AnalysisReport;
+}
+
 const VideoUpload: React.FC = () => {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
-    const [isAnalyzed, setIsAnalyzed] = useState(false);
+    const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+    const [uploadResponse, setUploadResponse] = useState<UploadResponse | null>(null);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -21,22 +43,52 @@ const VideoUpload: React.FC = () => {
         setIsDragging(false);
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             setSelectedFile(e.dataTransfer.files[0]);
-            setIsAnalyzed(false); // Reset on new file
+            setUploadStatus('idle');
         }
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
             setSelectedFile(e.target.files[0]);
-            setIsAnalyzed(false); // Reset on new file
+            setUploadStatus('idle');
         }
     };
 
-    const handleAnalyze = () => {
-        if (selectedFile) {
-            setIsAnalyzed(true);
+    const handleAnalyze = async () => {
+        if (!selectedFile) return;
+
+        setUploadStatus('uploading');
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        try {
+            const response = await fetch('http://localhost:8000/upload', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                throw new Error('Upload failed');
+            }
+
+            const data: UploadResponse = await response.json();
+            setUploadResponse(data);
+            setUploadStatus('success');
+        } catch (error) {
+            console.error('Error uploading file:', error);
+            setUploadStatus('error');
         }
     };
+
+    /** Confidence colour: green ≥ 70%, yellow ≥ 50%, red below */
+    const confClass = (conf: number): string => {
+        if (conf >= 0.7) return 'conf-high';
+        if (conf >= 0.5) return 'conf-mid';
+        return 'conf-low';
+    };
+
+    const report = uploadResponse?.report;
 
     return (
         <section className="video-upload-section">
@@ -68,7 +120,8 @@ const VideoUpload: React.FC = () => {
                                         className="remove-btn"
                                         onClick={() => {
                                             setSelectedFile(null);
-                                            setIsAnalyzed(false);
+                                            setUploadStatus('idle');
+                                            setUploadResponse(null);
                                         }}
                                     >
                                         Remove Video
@@ -91,42 +144,122 @@ const VideoUpload: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Right Side: Summary/Output Zone */}
+                    {/* Right Side: Summary / Output Zone */}
                     <div className="summary-card">
                         <div className="summary-header">
                             <h3>Analysis Summary</h3>
-                            <span className="status-badge">
+                            <span className={`status-badge ${uploadStatus === 'success' ? 'success' : uploadStatus === 'error' ? 'error' : ''}`}>
                                 {selectedFile
-                                    ? (isAnalyzed ? 'Analysis Complete' : 'Ready to Analyze')
+                                    ? (uploadStatus === 'uploading' ? 'Analyzing…' : uploadStatus === 'success' ? 'Completed' : 'Ready to Analyze')
                                     : 'Waiting for input'}
                             </span>
                         </div>
 
                         <div className="summary-content">
+                            {/* --- Empty state --- */}
                             {!selectedFile ? (
                                 <div className="empty-state">
-                                    <p>Upload a video to see AI-generated insights, detected anomalies, and safety summaries here.</p>
+                                    <p>Upload a video to see AI-generated insights, detected objects, and security alerts here.</p>
                                 </div>
-                            ) : !isAnalyzed ? (
+
+                                /* --- Pre-analysis / error --- */
+                            ) : uploadStatus === 'idle' || uploadStatus === 'error' ? (
                                 <div className="pre-analysis-state">
-                                    <p>Video ready for processing.</p>
+                                    <p>{uploadStatus === 'error' ? 'Upload failed. Please try again.' : 'Video ready for processing.'}</p>
                                     <button className="analyze-btn" onClick={handleAnalyze}>
-                                        Analyze Video
+                                        {uploadStatus === 'error' ? 'Retry Analysis' : 'Analyze Video'}
                                     </button>
                                 </div>
+
+                                /* --- Uploading / processing --- */
+                            ) : uploadStatus === 'uploading' ? (
+                                <div className="pre-analysis-state">
+                                    <p>Running YOLOv8 inference — this may take a moment…</p>
+                                    <div className="spinner" />
+                                </div>
+
+                                /* --- Results --- */
                             ) : (
-                                <div className="analysis-placeholder">
-                                    <div className="placeholder-line width-80"></div>
-                                    <div className="placeholder-line width-60"></div>
-                                    <div className="placeholder-line width-90"></div>
-                                    <div className="placeholder-item">
-                                        <span className="dot warning"></span>
-                                        <span>Potential security breach detected at 00:32</span>
+                                <div className="analysis-results">
+
+                                    {/* File stored banner */}
+                                    <div className="result-banner success-banner">
+                                        <span className="dot info" />
+                                        <span>File stored successfully &nbsp;·&nbsp; ID: <strong>{uploadResponse?.id}</strong></span>
                                     </div>
-                                    <div className="placeholder-item">
-                                        <span className="dot info"></span>
-                                        <span>2 individuals identified in restricted zone</span>
+
+                                    {/* AI error fallback */}
+                                    {report?.error && (
+                                        <div className="result-banner error-banner">
+                                            <span className="dot warning" />
+                                            <span>AI analysis failed: {report.error}</span>
+                                        </div>
+                                    )}
+
+                                    {/* Stats row */}
+                                    {!report?.error && (
+                                        <div className="stats-row">
+                                            <div className="stat-box">
+                                                <span className="stat-value">
+                                                    {Object.keys(report?.objects_detected ?? {}).length}
+                                                </span>
+                                                <span className="stat-label">Object types</span>
+                                            </div>
+                                            <div className="stat-box">
+                                                <span className="stat-value">
+                                                    {Object.values(report?.objects_detected ?? {}).reduce((s, o) => s + o.count, 0)}
+                                                </span>
+                                                <span className="stat-label">Total detections</span>
+                                            </div>
+                                            <div className="stat-box">
+                                                <span className="stat-value">{report?.total_frames_analyzed ?? 0}</span>
+                                                <span className="stat-label">Frames analyzed</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Detected objects */}
+                                    {report?.objects_detected && Object.keys(report.objects_detected).length > 0 ? (
+                                        <div className="ai-report">
+                                            <h4>Detected Objects</h4>
+                                            <div className="tags">
+                                                {Object.entries(report.objects_detected).map(([obj, info]) => (
+                                                    <span key={obj} className={`ai-tag ${confClass(info.avg_confidence)}`}>
+                                                        <span className="tag-name">{obj}</span>
+                                                        <span className="tag-meta">
+                                                            {info.count}× &nbsp;·&nbsp; {Math.round(info.avg_confidence * 100)}% conf
+                                                        </span>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : !report?.error ? (
+                                        <div className="result-banner">
+                                            <span className="dot info" />
+                                            <span>No objects detected above confidence threshold.</span>
+                                        </div>
+                                    ) : null}
+
+                                    {/* Security warnings */}
+                                    <div className="ai-report">
+                                        <h4>Security Alerts</h4>
+                                        {report?.security_warnings && report.security_warnings.length > 0 ? (
+                                            <div className="warnings-list">
+                                                {report.security_warnings.map((warning, i) => (
+                                                    <div key={i} className="result-banner warning-banner">
+                                                        <span className="dot warning" />
+                                                        <span>{warning}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="result-banner safe-banner">
+                                                <span className="dot safe" />
+                                                <span>No security threats detected.</span>
+                                            </div>
+                                        )}
                                     </div>
+
                                     <div className="cta-area">
                                         <button className="analyze-btn secondary">Download Full Report</button>
                                     </div>

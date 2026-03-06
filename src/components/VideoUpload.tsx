@@ -1,102 +1,198 @@
-import React, { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
+import {
+    uploadVideo,
+    getVideoStatus,
+    getVideoResults,
+    type VideoStatusResponse,
+    type VideoResultsResponse,
+    type FrameResultItem,
+} from '../services/api';
 import './VideoUpload.css';
 
-interface ObjectInfo {
-    count: number;
-    avg_confidence: number;
-}
+// ─── Threat level helpers ────────────────────────────────
+const THREAT_COLORS: Record<number, string> = {
+    0: '#22c55e', // NORMAL  → green
+    2: '#f59e0b', // WARNING → amber
+    3: '#ef4444', // CRITICAL→ red
+    4: '#dc2626', // URGENT  → darker red
+    5: '#7f1d1d', // EMERGENCY→ deep red
+};
 
-interface AnalysisReport {
-    status: string;
-    total_frames_analyzed: number;
-    objects_detected: Record<string, ObjectInfo>;
-    security_warnings: string[];
-    timeline: Record<string, number[]>;
-    error?: string;
-}
+const THREAT_LABELS: Record<number, string> = {
+    0: 'NORMAL',
+    2: 'WARNING',
+    3: 'CRITICAL',
+    4: 'URGENT',
+    5: 'EMERGENCY',
+};
 
-interface UploadResponse {
-    id: number;
-    filename: string;
-    status: string;
-    report: AnalysisReport;
-}
+const threatBadgeClass = (level: number): string => {
+    if (level >= 4) return 'threat-emergency';
+    if (level >= 3) return 'threat-critical';
+    if (level >= 2) return 'threat-warning';
+    return 'threat-normal';
+};
+
+// ─── Component ───────────────────────────────────────────
+type UploadPhase =
+    | 'idle'
+    | 'uploading'
+    | 'processing'
+    | 'completed'
+    | 'failed'
+    | 'error';
 
 const VideoUpload: React.FC = () => {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
-    const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
-    const [uploadResponse, setUploadResponse] = useState<UploadResponse | null>(null);
+    const [phase, setPhase] = useState<UploadPhase>('idle');
+    const [errorMsg, setErrorMsg] = useState('');
 
+    // Status + results from API
+    const [videoId, setVideoId] = useState<number | null>(null);
+    const [status, setStatus] = useState<VideoStatusResponse | null>(null);
+    const [results, setResults] = useState<VideoResultsResponse | null>(null);
+
+    // Polling ref so we can cancel
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // ── Cleanup polling ────────────────────────────────────
+    const stopPolling = useCallback(() => {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    }, []);
+
+    // ── Drag & Drop ────────────────────────────────────────
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(true);
     };
-
     const handleDragLeave = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
     };
-
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        if (e.dataTransfer.files?.length) {
+            resetState();
             setSelectedFile(e.dataTransfer.files[0]);
-            setUploadStatus('idle');
         }
     };
-
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files.length > 0) {
+        if (e.target.files?.length) {
+            resetState();
             setSelectedFile(e.target.files[0]);
-            setUploadStatus('idle');
         }
     };
 
+    const resetState = () => {
+        stopPolling();
+        setPhase('idle');
+        setErrorMsg('');
+        setVideoId(null);
+        setStatus(null);
+        setResults(null);
+    };
+
+    // ── Main Analyze Flow ──────────────────────────────────
     const handleAnalyze = async () => {
         if (!selectedFile) return;
 
-        setUploadStatus('uploading');
-
-        const formData = new FormData();
-        formData.append('file', selectedFile);
+        setPhase('uploading');
+        setErrorMsg('');
 
         try {
-            const response = await fetch('http://localhost:8000/upload', {
-                method: 'POST',
-                body: formData,
-            });
+            // 1) Upload
+            const uploadRes = await uploadVideo(selectedFile);
+            const id = uploadRes.video_id;
+            setVideoId(id);
+            setPhase('processing');
 
-            if (!response.ok) {
-                throw new Error('Upload failed');
-            }
+            // 2) Start polling every 2s
+            const poll = async () => {
+                try {
+                    const statusRes = await getVideoStatus(id);
+                    setStatus(statusRes);
 
-            const data: UploadResponse = await response.json();
-            setUploadResponse(data);
-            setUploadStatus('success');
-        } catch (error) {
-            console.error('Error uploading file:', error);
-            setUploadStatus('error');
+                    if (statusRes.status === 'completed') {
+                        stopPolling();
+                        // 3) Fetch full results
+                        try {
+                            const resultsRes = await getVideoResults(id);
+                            setResults(resultsRes);
+                            setPhase('completed');
+                        } catch (err: any) {
+                            setPhase('failed');
+                            setErrorMsg(err.message || 'Failed to fetch results.');
+                        }
+                    } else if (statusRes.status === 'failed') {
+                        stopPolling();
+                        setPhase('failed');
+                        setErrorMsg('Video processing failed on the server.');
+                    }
+                } catch (err: any) {
+                    // Don't stop polling on transient network errors
+                    console.warn('Polling error:', err);
+                }
+            };
+
+            // Immediate first poll
+            await poll();
+            pollRef.current = setInterval(poll, 2000);
+        } catch (err: any) {
+            setPhase('error');
+            setErrorMsg(err.message || 'Upload failed.');
         }
     };
 
-    /** Confidence colour: green ≥ 70%, yellow ≥ 50%, red below */
-    const confClass = (conf: number): string => {
-        if (conf >= 0.7) return 'conf-high';
-        if (conf >= 0.5) return 'conf-mid';
-        return 'conf-low';
-    };
+    // ── Derived stats ──────────────────────────────────────
+    const alertCount = results?.alerts?.length ?? 0;
+    const frameCount = results?.total_frames_analyzed ?? 0;
+    const maxThreat = results?.frames?.length
+        ? Math.max(...results.frames.map((f) => f.threat_level))
+        : 0;
 
-    const report = uploadResponse?.report;
+    // Aggregate detection counts by source
+    const detectionSummary = (() => {
+        if (!results?.frames) return { object: 0, weapon: 0, fire: 0 };
+        let object = 0, weapon = 0, fire = 0;
+        for (const fr of results.frames) {
+            const det = fr.detections;
+            if (det) {
+                object += det.object_detections?.length ?? 0;
+                weapon += det.weapon_detections?.length ?? 0;
+                fire += det.fire_detections?.length ?? 0;
+            }
+        }
+        return { object, weapon, fire };
+    })();
 
+    // Unique class names detected
+    const uniqueClasses = (() => {
+        if (!results?.frames) return [];
+        const set = new Set<string>();
+        for (const fr of results.frames) {
+            const det = fr.detections;
+            if (det) {
+                [...(det.object_detections ?? []),
+                ...(det.weapon_detections ?? []),
+                ...(det.fire_detections ?? [])].forEach(d => set.add(d.class_name));
+            }
+        }
+        return Array.from(set);
+    })();
+
+    // ── Render ──────────────────────────────────────────────
     return (
-        <section className="video-upload-section">
+        <section className="video-upload-section" id="video-analysis">
             <div className="video-upload-container">
                 <h2 className="section-title">Analyze Your Content</h2>
 
                 <div className="upload-layout">
-                    {/* Left Side: Upload Zone */}
+                    {/* ─── Left: Upload Zone ─────────────────────── */}
                     <div className="upload-card">
                         <div
                             className={`drop-zone ${isDragging ? 'dragging' : ''} ${selectedFile ? 'has-file' : ''}`}
@@ -116,12 +212,14 @@ const VideoUpload: React.FC = () => {
                                 <div className="file-preview">
                                     <div className="file-icon">🎬</div>
                                     <p className="file-name">{selectedFile.name}</p>
+                                    <p className="file-size">
+                                        {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB
+                                    </p>
                                     <button
                                         className="remove-btn"
                                         onClick={() => {
                                             setSelectedFile(null);
-                                            setUploadStatus('idle');
-                                            setUploadResponse(null);
+                                            resetState();
                                         }}
                                     >
                                         Remove Video
@@ -144,113 +242,183 @@ const VideoUpload: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Right Side: Summary / Output Zone */}
+                    {/* ─── Right: Summary / Results ──────────────── */}
                     <div className="summary-card">
                         <div className="summary-header">
                             <h3>Analysis Summary</h3>
-                            <span className={`status-badge ${uploadStatus === 'success' ? 'success' : uploadStatus === 'error' ? 'error' : ''}`}>
-                                {selectedFile
-                                    ? (uploadStatus === 'uploading' ? 'Analyzing…' : uploadStatus === 'success' ? 'Completed' : 'Ready to Analyze')
-                                    : 'Waiting for input'}
+                            <span className={`status-badge ${phase === 'completed' ? 'success' : phase === 'error' || phase === 'failed' ? 'error' : ''}`}>
+                                {phase === 'idle' && !selectedFile && 'Waiting for input'}
+                                {phase === 'idle' && selectedFile && 'Ready to Analyze'}
+                                {phase === 'uploading' && 'Uploading…'}
+                                {phase === 'processing' && 'Processing…'}
+                                {phase === 'completed' && 'Completed'}
+                                {(phase === 'error' || phase === 'failed') && 'Failed'}
                             </span>
                         </div>
 
                         <div className="summary-content">
-                            {/* --- Empty state --- */}
-                            {!selectedFile ? (
+                            {/* ── Empty state ─────────────────────────── */}
+                            {!selectedFile && phase === 'idle' && (
                                 <div className="empty-state">
                                     <p>Upload a video to see AI-generated insights, detected objects, and security alerts here.</p>
                                 </div>
+                            )}
 
-                                /* --- Pre-analysis / error --- */
-                            ) : uploadStatus === 'idle' || uploadStatus === 'error' ? (
+                            {/* ── Ready / Error – show analyze button ── */}
+                            {selectedFile && (phase === 'idle' || phase === 'error' || phase === 'failed') && (
                                 <div className="pre-analysis-state">
-                                    <p>{uploadStatus === 'error' ? 'Upload failed. Please try again.' : 'Video ready for processing.'}</p>
-                                    <button className="analyze-btn" onClick={handleAnalyze}>
-                                        {uploadStatus === 'error' ? 'Retry Analysis' : 'Analyze Video'}
-                                    </button>
-                                </div>
-
-                                /* --- Uploading / processing --- */
-                            ) : uploadStatus === 'uploading' ? (
-                                <div className="pre-analysis-state">
-                                    <p>Running YOLOv8 inference — this may take a moment…</p>
-                                    <div className="spinner" />
-                                </div>
-
-                                /* --- Results --- */
-                            ) : (
-                                <div className="analysis-results">
-
-                                    {/* File stored banner */}
-                                    <div className="result-banner success-banner">
-                                        <span className="dot info" />
-                                        <span>File stored successfully &nbsp;·&nbsp; ID: <strong>{uploadResponse?.id}</strong></span>
-                                    </div>
-
-                                    {/* AI error fallback */}
-                                    {report?.error && (
+                                    {(phase === 'error' || phase === 'failed') && (
                                         <div className="result-banner error-banner">
                                             <span className="dot warning" />
-                                            <span>AI analysis failed: {report.error}</span>
+                                            <span>{errorMsg || 'Something went wrong.'}</span>
                                         </div>
                                     )}
+                                    <p>{phase === 'idle' ? 'Video ready for processing.' : 'Click below to retry.'}</p>
+                                    <button className="analyze-btn" onClick={handleAnalyze}>
+                                        {phase === 'idle' ? 'Analyze Video' : 'Retry Analysis'}
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* ── Uploading ──────────────────────────── */}
+                            {phase === 'uploading' && (
+                                <div className="pre-analysis-state">
+                                    <p>Uploading video to server…</p>
+                                    <div className="spinner" />
+                                </div>
+                            )}
+
+                            {/* ── Processing with progress bar ──────── */}
+                            {phase === 'processing' && (
+                                <div className="processing-state">
+                                    <div className="processing-info">
+                                        <p className="processing-title">Running AI Analysis</p>
+                                        <p className="processing-subtitle">
+                                            YOLOv8 object, weapon &amp; fire detection in progress…
+                                        </p>
+                                    </div>
+
+                                    {status && (
+                                        <>
+                                            <div className="progress-container">
+                                                <div className="progress-header">
+                                                    <span>Progress</span>
+                                                    <span className="progress-pct">{status.progress_pct}%</span>
+                                                </div>
+                                                <div className="progress-bar-track">
+                                                    <div
+                                                        className="progress-bar-fill"
+                                                        style={{ width: `${status.progress_pct}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="processing-stats">
+                                                <div className="proc-stat">
+                                                    <span className="proc-stat-value">{status.frames_analyzed}</span>
+                                                    <span className="proc-stat-label">Frames analyzed</span>
+                                                </div>
+                                                {status.duration_seconds != null && (
+                                                    <div className="proc-stat">
+                                                        <span className="proc-stat-value">{status.duration_seconds.toFixed(1)}s</span>
+                                                        <span className="proc-stat-label">Video duration</span>
+                                                    </div>
+                                                )}
+                                                {status.resolution && (
+                                                    <div className="proc-stat">
+                                                        <span className="proc-stat-value">{status.resolution}</span>
+                                                        <span className="proc-stat-label">Resolution</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+
+                                    <div className="spinner" />
+                                </div>
+                            )}
+
+                            {/* ── Completed – show results ──────────── */}
+                            {phase === 'completed' && results && (
+                                <div className="analysis-results">
+                                    {/* Video ID + threat banner */}
+                                    <div className={`result-banner ${threatBadgeClass(maxThreat)}-banner`}>
+                                        <span className="dot" style={{ backgroundColor: THREAT_COLORS[maxThreat] || '#22c55e' }} />
+                                        <span>
+                                            Video #{videoId} &nbsp;·&nbsp; Max Threat:&nbsp;
+                                            <strong>{THREAT_LABELS[maxThreat] || 'NORMAL'}</strong>
+                                        </span>
+                                    </div>
 
                                     {/* Stats row */}
-                                    {!report?.error && (
-                                        <div className="stats-row">
-                                            <div className="stat-box">
-                                                <span className="stat-value">
-                                                    {Object.keys(report?.objects_detected ?? {}).length}
-                                                </span>
-                                                <span className="stat-label">Object types</span>
-                                            </div>
-                                            <div className="stat-box">
-                                                <span className="stat-value">
-                                                    {Object.values(report?.objects_detected ?? {}).reduce((s, o) => s + o.count, 0)}
-                                                </span>
-                                                <span className="stat-label">Total detections</span>
-                                            </div>
-                                            <div className="stat-box">
-                                                <span className="stat-value">{report?.total_frames_analyzed ?? 0}</span>
-                                                <span className="stat-label">Frames analyzed</span>
-                                            </div>
+                                    <div className="stats-row">
+                                        <div className="stat-box">
+                                            <span className="stat-value">{frameCount}</span>
+                                            <span className="stat-label">Frames analyzed</span>
                                         </div>
-                                    )}
+                                        <div className="stat-box">
+                                            <span className="stat-value">{alertCount}</span>
+                                            <span className="stat-label">Alerts</span>
+                                        </div>
+                                        <div className="stat-box">
+                                            <span className="stat-value">{uniqueClasses.length}</span>
+                                            <span className="stat-label">Object types</span>
+                                        </div>
+                                    </div>
 
-                                    {/* Detected objects */}
-                                    {report?.objects_detected && Object.keys(report.objects_detected).length > 0 ? (
+                                    {/* Detection counts by model */}
+                                    <div className="stats-row">
+                                        <div className="stat-box">
+                                            <span className="stat-value">{detectionSummary.object}</span>
+                                            <span className="stat-label">Object detections</span>
+                                        </div>
+                                        <div className="stat-box">
+                                            <span className="stat-value" style={{ color: detectionSummary.weapon > 0 ? '#ef4444' : undefined }}>
+                                                {detectionSummary.weapon}
+                                            </span>
+                                            <span className="stat-label">Weapon detections</span>
+                                        </div>
+                                        <div className="stat-box">
+                                            <span className="stat-value" style={{ color: detectionSummary.fire > 0 ? '#f59e0b' : undefined }}>
+                                                {detectionSummary.fire}
+                                            </span>
+                                            <span className="stat-label">Fire detections</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Detected object tags */}
+                                    {uniqueClasses.length > 0 && (
                                         <div className="ai-report">
                                             <h4>Detected Objects</h4>
                                             <div className="tags">
-                                                {Object.entries(report.objects_detected).map(([obj, info]) => (
-                                                    <span key={obj} className={`ai-tag ${confClass(info.avg_confidence)}`}>
-                                                        <span className="tag-name">{obj}</span>
-                                                        <span className="tag-meta">
-                                                            {info.count}× &nbsp;·&nbsp; {Math.round(info.avg_confidence * 100)}% conf
-                                                        </span>
+                                                {uniqueClasses.map((cls) => (
+                                                    <span key={cls} className="ai-tag conf-high">
+                                                        <span className="tag-name">{cls}</span>
                                                     </span>
                                                 ))}
                                             </div>
                                         </div>
-                                    ) : !report?.error ? (
-                                        <div className="result-banner">
-                                            <span className="dot info" />
-                                            <span>No objects detected above confidence threshold.</span>
-                                        </div>
-                                    ) : null}
+                                    )}
 
-                                    {/* Security warnings */}
+                                    {/* Alerts */}
                                     <div className="ai-report">
                                         <h4>Security Alerts</h4>
-                                        {report?.security_warnings && report.security_warnings.length > 0 ? (
+                                        {alertCount > 0 ? (
                                             <div className="warnings-list">
-                                                {report.security_warnings.map((warning, i) => (
+                                                {results.alerts.slice(0, 10).map((a, i) => (
                                                     <div key={i} className="result-banner warning-banner">
-                                                        <span className="dot warning" />
-                                                        <span>{warning}</span>
+                                                        <span className="dot" style={{ backgroundColor: THREAT_COLORS[a.threat_level] || '#f59e0b' }} />
+                                                        <span>
+                                                            [{a.timestamp.toFixed(1)}s] {a.threat_label}
+                                                            <span className={`threat-badge ${threatBadgeClass(a.threat_level)}`}>
+                                                                Lv {a.threat_level}
+                                                            </span>
+                                                        </span>
                                                     </div>
                                                 ))}
+                                                {results.alerts.length > 10 && (
+                                                    <p className="more-alerts">…and {results.alerts.length - 10} more alerts</p>
+                                                )}
                                             </div>
                                         ) : (
                                             <div className="result-banner safe-banner">
@@ -260,9 +428,27 @@ const VideoUpload: React.FC = () => {
                                         )}
                                     </div>
 
-                                    <div className="cta-area">
-                                        <button className="analyze-btn secondary">Download Full Report</button>
-                                    </div>
+                                    {/* Timeline: top 10 highest-threat frames */}
+                                    {results.frames.length > 0 && (
+                                        <div className="ai-report">
+                                            <h4>Threat Timeline (Top Frames)</h4>
+                                            <div className="threat-timeline">
+                                                {[...results.frames]
+                                                    .sort((a, b) => b.threat_level - a.threat_level)
+                                                    .slice(0, 8)
+                                                    .map((fr: FrameResultItem) => (
+                                                        <div key={fr.frame_id} className="timeline-item">
+                                                            <span className="timeline-time">{fr.timestamp.toFixed(1)}s</span>
+                                                            <span
+                                                                className={`threat-badge ${threatBadgeClass(fr.threat_level)}`}
+                                                            >
+                                                                {fr.threat_label}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

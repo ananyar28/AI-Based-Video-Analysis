@@ -1,30 +1,41 @@
 :root {
-  --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  --font-family: 'Outfit', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
-  /* Color Palette */
-  --primary-color: #0f172a;
-  /* Deep Navy/Slate - Kept for text headings on light backgrounds */
-  --hero-bg-start: #061021;
-  /* Dark Navy from image left */
-  --hero-bg-end: #0f766e;
-  /* Teal from image right */
-
+  /* Premium Color Palette */
+  --primary-color: #0b1120;
+  /* Deep, rich space navy */
   --secondary-color: #334155;
-  --accent-color: #0d9488;
-  /* Teal accent */
-  --background-color: #f8fafc;
-  --text-color: #1e293b;
-  --text-light: #64748b;
+  --accent-color: #14b8a6;
+  /* Vibrant Teal */
+  --accent-hover: #0d9488;
+  --background-start: #0f172a;
+  --background-end: #020617;
+
+  --surface-color: rgba(255, 255, 255, 0.03);
+  /* Glassmorphism base */
+  --surface-border: rgba(255, 255, 255, 0.08);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
   --white: #ffffff;
+  --black: #000000;
 
-  --footer-bg: #061021;
-  /* Dark Navy matches Hero start */
-  --text-on-dark: #ffffff;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
 
-  /* Gradient */
-  --gradient-primary: linear-gradient(90deg, var(--hero-bg-start) 0%, var(--hero-bg-end) 100%);
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, var(--background-start) 0%, var(--background-end) 100%);
+  --gradient-accent: linear-gradient(135deg, #14b8a6 0%, #3b82f6 100%);
 
-  --navbar-height: 70px;
+  --navbar-height: 72px;
+
+  /* Drop Shadows for depth */
+  --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 20px rgba(20, 184, 166, 0.3);
 }
 
 * {
@@ -35,8 +46,9 @@
 
 body {
   font-family: var(--font-family);
-  background-color: var(--background-color);
-  color: var(--text-color);
+  background: var(--gradient-primary);
+  background-attachment: fixed;
+  color: var(--text-primary);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -45,9 +57,27 @@ body {
 a {
   text-decoration: none;
   color: inherit;
-  transition: color 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 ul {
   list-style: none;
+}
+
+/* Base Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background-end);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

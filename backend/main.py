@@ -119,51 +119,84 @@ def _process_video(video_id: int, file_path: str):
         logger.info(
             f"[BG] Starting analysis for video {video_id} | "
             f"{meta['duration_seconds']}s | {meta['total_frames']} frames | "
-            f"{meta['fps']} fps → extracting at 5 fps"
+            f"{meta['fps']} fps → extracting at 5 fps (Parallel Mode)"
         )
 
         frames_analyzed = 0
+        from detection.runner import run_detection, _executor
+        from concurrent.futures import as_completed
 
-        # ── 2. Frame extraction + detection loop ────────────────────────
-        for frame_data in extract_frames(file_path, target_fps=5):
+        # Use a sliding window of futures to avoid loading too many frames into RAM
+        MAX_QUEUE_SIZE = 15 
+        futures = {}
+        
+        frame_gen = extract_frames(file_path, target_fps=5)
+        
+        done_processing = False
+        while not done_processing or futures:
+            # 1. Fill the queue
+            while not done_processing and len(futures) < MAX_QUEUE_SIZE:
+                try:
+                    frame_data = next(frame_gen)
+                    fut = _executor.submit(run_detection, frame_data)
+                    futures[fut] = frame_data
+                except StopIteration:
+                    done_processing = True
+
+            if not futures:
+                break
+
+            # 2. Wait for at least one result
+            # We use a short timeout so we can keep filling the queue
+            completed = []
             try:
-                result: FrameResult = run_detection(frame_data)
-            except Exception as e:
-                logger.warning(f"[BG] Detection failed on frame {frame_data.frame_number}: {e}")
-                continue
+                # Get the first one that finishes
+                first_finished = next(as_completed(futures.keys(), timeout=1.0))
+                completed.append(first_finished)
+            except Exception:
+                # Timeout or empty, just loop back
+                pass
 
-            # ── 3. Save FrameResult to DB ───────────────────────────────
-            db_frame = models.FrameResult(
-                video_id=video_id,
-                camera_id=None,
-                frame_id=result.frame_id,
-                timestamp=result.timestamp,
-                threat_level=result.threat_level,
-                threat_label=result.threat_label,
-                detections=result.to_dict(),
-            )
-            db.add(db_frame)
+            for fut in completed:
+                frame_data = futures.pop(fut)
+                try:
+                    result: FrameResult = fut.result()
+                    
+                    # ── 3. Save FrameResult to DB ───────────────────────────────
+                    db_frame = models.FrameResult(
+                        video_id=video_id,
+                        camera_id=None,
+                        frame_id=result.frame_id,
+                        timestamp=result.timestamp,
+                        threat_level=result.threat_level,
+                        threat_label=result.threat_label,
+                        detections=result.to_dict(),
+                    )
+                    db.add(db_frame)
 
-            # ── 4. Save alert rows for threat_level >= 2 ────────────────
-            if result.threat_level >= 2:
-                db_alert = models.Alert(
-                    video_id=video_id,
-                    camera_id=None,
-                    timestamp=result.timestamp,
-                    threat_level=result.threat_level,
-                    threat_label=result.threat_label,
-                )
-                db.add(db_alert)
+                    # ── 4. Save alert rows for threat_level >= 2 ────────────────
+                    if result.threat_level >= 2:
+                        db_alert = models.Alert(
+                            video_id=video_id,
+                            camera_id=None,
+                            timestamp=result.timestamp,
+                            threat_level=result.threat_level,
+                            threat_label=result.threat_label,
+                        )
+                        db.add(db_alert)
 
-            frames_analyzed += 1
+                    frames_analyzed += 1
 
-            # Commit in batches of 50 to avoid holding a huge transaction
-            if frames_analyzed % 50 == 0:
-                video.frames_analyzed = frames_analyzed
-                db.commit()
-                logger.info(
-                    f"[BG] Video {video_id}: {frames_analyzed} frames analyzed..."
-                )
+                    # Commit in batches of 10 for better UI responsiveness
+                    if frames_analyzed % 10 == 0:
+                        video.frames_analyzed = frames_analyzed
+                        db.commit()
+                        logger.info(
+                            f"[BG] Video {video_id}: {frames_analyzed} frames analyzed..."
+                        )
+
+                except Exception as e:
+                    logger.warning(f"[BG] Detection failed on frame {frame_data.frame_number}: {e}")
 
         # ── 5. Final commit + mark completed ────────────────────────────
         video.frames_analyzed = frames_analyzed

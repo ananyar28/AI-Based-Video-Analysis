@@ -86,9 +86,11 @@ def _get_model() -> YOLO | None:
 
     try:
         logger.info(f"[WeaponDetector] Loading model from: {path}")
-        _model = YOLO(path)
+        from .runner import get_device
+        device = get_device()
+        _model = YOLO(path).to(device)
         _model_available = True
-        logger.info(f"[WeaponDetector] Model loaded. Classes: {_model.names}")
+        logger.info(f"[WeaponDetector] Model loaded on {device}. Classes: {_model.names}")
         return _model
     except Exception as e:
         logger.error(f"[WeaponDetector] Failed to load model: {e}")

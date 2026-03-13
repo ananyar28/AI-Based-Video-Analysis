@@ -3,14 +3,27 @@ import { startStream, stopStream, getStreamStatus, type StreamStatusResponse } f
 import './VideoUpload.css'; // Reuse styles for consistency
 
 const LiveStreamAnalysis: React.FC = () => {
+    const [sourceType, setSourceType] = useState<'webcam' | 'url'>('webcam');
     const [url, setUrl] = useState('');
     const [cameraId, setCameraId] = useState('');
     const [phase, setPhase] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState('');
     const [status, setStatus] = useState<StreamStatusResponse | null>(null);
 
-    // Polling ref
+    // Refs
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const streamRef = useRef<MediaStream | null>(null);
+
+    const stopVideoTracks = () => {
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+        }
+        if (videoRef.current) {
+            videoRef.current.srcObject = null;
+        }
+    };
 
     const stopPolling = () => {
         if (pollRef.current) {
@@ -21,12 +34,21 @@ const LiveStreamAnalysis: React.FC = () => {
 
     // Cleanup on unmount
     useEffect(() => {
-        return () => stopPolling();
+        return () => {
+            stopPolling();
+            stopVideoTracks();
+        };
     }, []);
 
     const handleStart = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!url) return;
+
+        let targetUrl = url;
+        if (sourceType === 'webcam') {
+            targetUrl = '0'; // Default webcam index for OpenCV
+        } else if (!url) {
+            return;
+        }
 
         const id = cameraId || `cam-${Date.now()}`;
         if (!cameraId) setCameraId(id);
@@ -34,8 +56,22 @@ const LiveStreamAnalysis: React.FC = () => {
         setPhase('connecting');
         setErrorMsg('');
 
+        // If webcam, request browser video feed for preview
+        if (sourceType === 'webcam') {
+            try {
+                const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                streamRef.current = mediaStream;
+                if (videoRef.current) {
+                    videoRef.current.srcObject = mediaStream;
+                }
+            } catch (err) {
+                console.warn("Could not access local webcam preview", err);
+                // We proceed anyway, maybe the backend running locally can still access it.
+            }
+        }
+
         try {
-            await startStream(url, id, 5); // Target 5 FPS
+            await startStream(targetUrl, id, 5); // Target 5 FPS
             setPhase('streaming');
 
             // Poll status every 2 seconds
@@ -45,6 +81,7 @@ const LiveStreamAnalysis: React.FC = () => {
                     setStatus(st);
                     if (!st.is_running) {
                         stopPolling();
+                        stopVideoTracks();
                         setPhase('error');
                         setErrorMsg('Stream disconnected or stopped gracefully.');
                     }
@@ -55,6 +92,7 @@ const LiveStreamAnalysis: React.FC = () => {
 
         } catch (err: any) {
             setPhase('error');
+            stopVideoTracks();
             setErrorMsg(err.message || 'Failed to connect to stream.');
         }
     };
@@ -66,41 +104,72 @@ const LiveStreamAnalysis: React.FC = () => {
             console.warn("Could not stop stream cleanly", err);
         }
         stopPolling();
+        stopVideoTracks();
+
         setPhase('idle');
         setStatus(null);
         setCameraId('');
-        setUrl('');
+        if (sourceType === 'url') {
+            setUrl('');
+        }
     };
 
     return (
         <section className="video-upload-section">
-            <div className="video-upload-container">
+            <div className="video-upload-container" style={{ maxWidth: '1100px' }}>
                 <h2 className="section-title">Live Stream Analysis</h2>
 
-                <div className="upload-layout">
+                <div className="upload-layout" style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
                     {/* Left: Input Config */}
-                    <div className="upload-card">
+                    <div className="upload-card" style={{ flex: 1, minWidth: '350px' }}>
                         <form onSubmit={handleStart} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', height: '100%' }}>
                             <div style={{ flex: 1 }}>
                                 <div style={{ marginBottom: '1.5rem' }}>
-                                    <h3 style={{ fontSize: '1.2rem', color: 'var(--text-primary)', marginBottom: '1rem' }}>Stream Configuration</h3>
-                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-                                        Enter an RTSP, HTTP(S) URL, or a local camera index (like `0` or `1`) to begin real-time analysis.
-                                    </p>
+                                    <h3 style={{ fontSize: '1.2rem', color: 'var(--text-primary)', marginBottom: '1rem' }}>Source Configuration</h3>
+
+                                    {/* Source Toggle */}
+                                    <div style={{ display: 'flex', gap: '10px', marginBottom: '1.5rem', background: 'var(--surface-color)', padding: '6px', borderRadius: '10px', border: '1px solid var(--surface-border)' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSourceType('webcam')}
+                                            style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: sourceType === 'webcam' ? 'var(--accent-color)' : 'transparent', color: sourceType === 'webcam' ? 'white' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.3s' }}
+                                        >
+                                            Local Webcam
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSourceType('url')}
+                                            style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: sourceType === 'url' ? 'var(--accent-color)' : 'transparent', color: sourceType === 'url' ? 'white' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.3s' }}
+                                        >
+                                            IP / RTSP URL
+                                        </button>
+                                    </div>
+
+                                    {sourceType === 'webcam' ? (
+                                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                                            Select "Local Webcam" to use your device's built-in camera for real-time threat detection.
+                                        </p>
+                                    ) : (
+                                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                                            Enter an RTSP, HTTP(S) URL to begin real-time analysis on a remote IP Camera.
+                                        </p>
+                                    )}
                                 </div>
 
-                                <div style={{ marginBottom: '1.5rem' }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Camera / Stream URL</label>
-                                    <input
-                                        type="text"
-                                        value={url}
-                                        onChange={(e) => setUrl(e.target.value)}
-                                        placeholder="e.g. rtsp://admin:12345@192.168.1.100:554/stream1"
-                                        disabled={phase !== 'idle' && phase !== 'error'}
-                                        style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--surface-border)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-primary)' }}
-                                        required
-                                    />
-                                </div>
+                                {sourceType === 'url' && (
+                                    <div style={{ marginBottom: '1.5rem' }}>
+                                        <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Stream URL</label>
+                                        <input
+                                            type="text"
+                                            value={url}
+                                            onChange={(e) => setUrl(e.target.value)}
+                                            placeholder="e.g. rtsp://192.168.1.100:554/stream1"
+                                            disabled={phase !== 'idle' && phase !== 'error'}
+                                            style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--surface-border)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-primary)' }}
+                                            required={sourceType === 'url'}
+                                        />
+                                    </div>
+                                )}
 
                                 <div style={{ marginBottom: '1.5rem' }}>
                                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Camera ID (Optional)</label>
@@ -108,7 +177,7 @@ const LiveStreamAnalysis: React.FC = () => {
                                         type="text"
                                         value={cameraId}
                                         onChange={(e) => setCameraId(e.target.value)}
-                                        placeholder="e.g. front-door-cam"
+                                        placeholder="e.g. lobby-cam-01"
                                         disabled={phase !== 'idle' && phase !== 'error'}
                                         style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--surface-border)', background: 'rgba(0,0,0,0.2)', color: 'var(--text-primary)' }}
                                     />
@@ -129,8 +198,8 @@ const LiveStreamAnalysis: React.FC = () => {
                         </form>
                     </div>
 
-                    {/* Right: Status Summary */}
-                    <div className="summary-card">
+                    {/* Right: Status Summary & Video Feed */}
+                    <div className="summary-card" style={{ flex: 1.5, minWidth: '400px' }}>
                         <div className="summary-header">
                             <h3>Live Status</h3>
                             <span className={`status-badge ${phase === 'streaming' ? 'success' : phase === 'error' ? 'error' : ''}`}>
@@ -141,58 +210,81 @@ const LiveStreamAnalysis: React.FC = () => {
                             </span>
                         </div>
 
-                        <div className="summary-content">
-                            {phase === 'idle' && (
-                                <div className="empty-state">
-                                    <p>Connect a camera to view real-time analysis health and statistics.</p>
-                                </div>
-                            )}
+                        <div className="summary-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                            {/* Video Preview Box */}
+                            <div style={{
+                                background: '#000',
+                                borderRadius: '8px',
+                                aspectRatio: '16/9',
+                                marginBottom: '1.5rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                border: '1px solid var(--surface-border)',
+                                overflow: 'hidden',
+                                position: 'relative'
+                            }}>
+                                <video
+                                    ref={videoRef}
+                                    autoPlay
+                                    playsInline
+                                    muted
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: (phase === 'streaming' || phase === 'connecting') && sourceType === 'webcam' ? 'block' : 'none' }}
+                                />
 
+                                {((phase === 'idle' || phase === 'error') || sourceType === 'url') && (
+                                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
+                                        {sourceType === 'url' ? (
+                                            phase === 'streaming' ? 'Analysis running on remote stream...' : 'Awaiting Connection...'
+                                        ) : (
+                                            phase === 'error' ? errorMsg : 'Camera feed will appear here'
+                                        )}
+                                    </div>
+                                )}
+
+                                {phase === 'streaming' && sourceType === 'webcam' && (
+                                    <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(239, 68, 68, 0.8)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                                        ● REC
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Status Stats */}
                             {phase === 'connecting' && (
-                                <div className="pre-analysis-state">
-                                    <p>Connecting to {url}...</p>
+                                <div className="pre-analysis-state" style={{ flex: 1 }}>
+                                    <p>Initializing Connection...</p>
                                     <div className="spinner" />
                                 </div>
                             )}
 
                             {phase === 'error' && (
-                                <div className="pre-analysis-state">
+                                <div className="pre-analysis-state" style={{ flex: 1 }}>
                                     <div className="result-banner error-banner">
                                         <span className="dot" />
                                         <span>{errorMsg}</span>
                                     </div>
-                                    <button className="analyze-btn secondary" onClick={() => setPhase('idle')}>Reset</button>
                                 </div>
                             )}
 
                             {phase === 'streaming' && status && (
-                                <div className="processing-state" style={{ paddingTop: '0' }}>
-
-                                    <div className="processing-info" style={{ marginBottom: '1rem', width: '100%' }}>
-                                        <div className="result-banner success-banner" style={{ marginBottom: '1.5rem', justifyContent: 'center' }}>
-                                            <span className="dot safe" />
-                                            <span>Stream active: <strong>{status.camera_id}</strong></span>
-                                        </div>
-                                    </div>
-
-                                    <div className="processing-stats" style={{ flexWrap: 'wrap' }}>
-                                        <div className="proc-stat">
+                                <div className="processing-state" style={{ paddingTop: '0', flex: 1 }}>
+                                    <div className="processing-stats" style={{ flexWrap: 'wrap', gap: '10px' }}>
+                                        <div className="proc-stat" style={{ flex: 1, padding: '10px' }}>
                                             <span className="proc-stat-value">{status.frames_captured}</span>
-                                            <span className="proc-stat-label">Frames Captured</span>
+                                            <span className="proc-stat-label">Captured</span>
                                         </div>
-                                        <div className="proc-stat">
+                                        <div className="proc-stat" style={{ flex: 1, padding: '10px' }}>
                                             <span className="proc-stat-value">{status.frames_processed}</span>
-                                            <span className="proc-stat-label">Frames Analyzed</span>
+                                            <span className="proc-stat-label">Analyzed</span>
                                         </div>
-                                        <div className="proc-stat" style={{ minWidth: '100%' }}>
+                                        <div className="proc-stat" style={{ flex: 1, padding: '10px' }}>
                                             <span className="proc-stat-value">{status.uptime_seconds.toFixed(1)}s</span>
                                             <span className="proc-stat-label">Uptime</span>
                                         </div>
                                     </div>
 
                                     <div style={{ marginTop: '1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                                        <p>Target FPS: {status.target_fps} | Errors: {status.errors}</p>
-                                        <div className="spinner" style={{ width: '24px', height: '24px', borderWidth: '2px', marginTop: '1rem' }} />
+                                        <p>Target FPS: {status.target_fps} | Stream ID: {status.camera_id}</p>
                                     </div>
                                 </div>
                             )}

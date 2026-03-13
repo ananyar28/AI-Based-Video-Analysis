@@ -27,8 +27,24 @@ from .merger import merge_results
 
 logger = logging.getLogger(__name__)
 
-# Reuse the same executor across calls (avoids thread spawn overhead per frame)
-_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="detector")
+import os
+
+# Reuse the same executor across calls
+_executor = ThreadPoolExecutor(max_workers=9, thread_name_prefix="detector")
+
+# Global device cache
+_DEVICE = None
+
+def get_device():
+    global _DEVICE
+    if _DEVICE is None:
+        try:
+            import torch
+            _DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+        except Exception:
+            _DEVICE = 'cpu'
+        logger.info(f"[Runner] Using device: {_DEVICE}")
+    return _DEVICE
 
 
 # ---------------------------------------------------------------------------
@@ -36,41 +52,29 @@ _executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="detector")
 # ---------------------------------------------------------------------------
 def run_detection(frame_data: FrameData) -> FrameResult:
     """
-    Run all 3 detectors in parallel on a single frame and return the
-    merged FrameResult.
-
-    Parameters
-    ----------
-    frame_data : FrameData — a single frame from extract_frames() or StreamExtractor
-
-    Returns
-    -------
-    FrameResult — merged detections with threat level assigned
+    Run all 3 detectors on a single frame and return the merged FrameResult.
+    Sequential execution here is safer when called from a parallel frame-level pool.
     """
-    # Submit all 3 detectors simultaneously
-    future_obj    = _executor.submit(object_detector.detect, frame_data)
-    future_weapon = _executor.submit(weapon_detector.detect, frame_data)
-    future_fire   = _executor.submit(fire_detector.detect, frame_data)
+    # Run detectors one by one (safe within a parent thread)
+    obj_dets = []
+    try:
+        obj_dets = object_detector.detect(frame_data)
+    except Exception as e:
+        logger.error(f"[Runner] ObjectDetector failed: {e}")
 
-    # Collect results — with individual error handling per model
-    obj_dets:    List[Detection] = _safe_result(future_obj,    "ObjectDetector")
-    weapon_dets: List[Detection] = _safe_result(future_weapon, "WeaponDetector")
-    fire_dets:   List[Detection] = _safe_result(future_fire,   "FireDetector")
+    weapon_dets = []
+    try:
+        weapon_dets = weapon_detector.detect(frame_data)
+    except Exception as e:
+        logger.error(f"[Runner] WeaponDetector failed: {e}")
+
+    fire_dets = []
+    try:
+        fire_dets = fire_detector.detect(frame_data)
+    except Exception as e:
+        logger.error(f"[Runner] FireDetector failed: {e}")
 
     return merge_results(frame_data, obj_dets, weapon_dets, fire_dets)
 
 
-def _safe_result(future, model_name: str) -> List[Detection]:
-    """
-    Retrieve a future's result safely.
-    If the model threw an exception, log it and return an empty list
-    so the other models' results are not lost.
-    """
-    try:
-        return future.result()
-    except Exception as e:
-        logger.error(
-            f"[Runner] {model_name} failed on this frame: {e}",
-            exc_info=True
-        )
-        return []
+    return merge_results(frame_data, obj_dets, weapon_dets, fire_dets)

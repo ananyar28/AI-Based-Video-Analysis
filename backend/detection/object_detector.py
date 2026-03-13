@@ -76,8 +76,10 @@ def _get_model() -> YOLO:
     if _model is None:
         path = _resolve_model_path()
         logger.info(f"[ObjectDetector] Loading model from: {path}")
-        _model = YOLO(path)
-        logger.info("[ObjectDetector] Model loaded.")
+        from .runner import get_device
+        device = get_device()
+        _model = YOLO(path).to(device)
+        logger.info(f"[ObjectDetector] Model loaded on {device}.")
     return _model
 
 

@@ -52,8 +52,10 @@ def _get_model() -> YOLO:
     if _model is None:
         path = _resolve_model_path()
         logger.info(f"[FireDetector] Loading model from: {path}")
-        _model = YOLO(path)
-        logger.info(f"[FireDetector] Model loaded. Classes: {_model.names}")
+        from .runner import get_device
+        device = get_device()
+        _model = YOLO(path).to(device)
+        logger.info(f"[FireDetector] Model loaded on {device}. Classes: {_model.names}")
     return _model
 
 

@@ -150,76 +150,59 @@ def get_video_metadata(path: str) -> dict:
 # ---------------------------------------------------------------------------
 def extract_frames(
     path: str,
-    target_fps: int = DEFAULT_TARGET_FPS
+    target_fps: int = DEFAULT_TARGET_FPS,
+    resize_to: int = 640
 ) -> Generator[FrameData, None, None]:
     """
     Extract sampled frames from a video file as a generator.
-
-    Frames are NOT written to disk — they are yielded as in-memory
-    numpy arrays inside FrameData objects, ready to be passed directly
-    to the detection layer.
-
-    Parameters
-    ----------
-    path       : str — path to video file (must pass validate_video_file first)
-    target_fps : int — how many frames per second to extract (default: 5)
-
-    Yields
-    ------
-    FrameData objects, one per sampled frame.
-
-    Example
-    -------
-    For a 30-fps video with target_fps=5:
-        interval = round(30 / 5) = 6
-        → yields frame 0, 6, 12, 18, 24, 30 ...
-        → each yielded frame has correct timestamp in seconds
+    Uses fast seeking to skip redundant frames.
     """
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video for extraction: {path}")
 
-    # Read native metadata once
-    native_fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width         = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height        = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration      = total_frames / native_fps if native_fps > 0 else 0.0
+    native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     metadata = {
-        "fps":              round(native_fps, 2),
-        "width":            width,
-        "height":           height,
-        "total_frames":     total_frames,
-        "duration_seconds": round(duration, 2),
-        "resolution":       f"{width}x{height}",
+        "fps": round(native_fps, 2),
+        "width": width,
+        "height": height,
+        "total_frames": total_frames,
+        "duration_seconds": round(total_frames / native_fps, 2) if native_fps > 0 else 0.0,
+        "resolution": f"{width}x{height}",
     }
 
-    # Calculate the sampling interval
-    # e.g. native=30fps, target=5fps → extract every 6th frame
     interval = max(1, round(native_fps / target_fps))
-
-    frame_number = 0
-
+    
+    current_frame = 0
     try:
-        while cap.isOpened():
+        while current_frame < total_frames:
+            # Fast seek to the target frame
+            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
             success, frame = cap.read()
             if not success:
-                break   # end of video or read error
+                break
 
-            # Only yield frames that fall on the interval
-            if frame_number % interval == 0:
-                timestamp = round(frame_number / native_fps, 4)
+            # Optimization: Downscale if image is larger than target
+            # YOLO models usually perform best at 640px
+            if resize_to and (width > resize_to or height > resize_to):
+                h, w = frame.shape[:2]
+                scale = resize_to / max(w, h)
+                new_size = (int(w * scale), int(h * scale))
+                frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_LINEAR)
 
-                yield FrameData(
-                    frame_number=frame_number,
-                    timestamp=timestamp,
-                    image=frame,
-                    video_metadata=metadata,
-                    camera_id=None,    # None = video file (not stream)
-                )
+            yield FrameData(
+                frame_number=current_frame,
+                timestamp=round(current_frame / native_fps, 4),
+                image=frame,
+                video_metadata=metadata,
+                camera_id=None,
+            )
 
-            frame_number += 1
+            current_frame += interval
 
     finally:
         cap.release()

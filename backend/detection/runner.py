@@ -53,9 +53,18 @@ def get_device():
 def run_detection(frame_data: FrameData) -> FrameResult:
     """
     Run all 3 detectors on a single frame and return the merged FrameResult.
-    Sequential execution here is safer when called from a parallel frame-level pool.
+    If USE_VERTEX_AI is true, uses the cloud GPU. Otherwise, uses local CPU models.
     """
-    # Run detectors one by one (safe within a parent thread)
+    from .vertex_client import detector as vertex_detector
+    
+    if vertex_detector.use_vertex:
+        # 1. Call Vertex AI for all 3 models at once (Faster!)
+        obj_dets, weapon_dets, fire_dets = vertex_detector.detect(frame_data)
+        
+        # 2. Results from Vertex already contain bbox and confidence
+        return merge_results(frame_data, obj_dets, weapon_dets, fire_dets)
+    
+    # --- FALLBACK: Local Detectors (CPU) ---
     obj_dets = []
     try:
         obj_dets = object_detector.detect(frame_data)

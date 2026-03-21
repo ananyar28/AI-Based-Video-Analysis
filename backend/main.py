@@ -19,6 +19,9 @@ import asyncio
 from datetime import datetime
 from typing import Dict
 
+from dotenv import load_dotenv
+load_dotenv()  # Load Vertex AI config from .env
+
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -93,7 +96,16 @@ def _process_video(video_id: int, file_path: str):
     """
     Background task: extract frames → run detection → save results to DB.
     Updates the Video row status throughout.
+
+    Speed optimizations applied
+    ---------------------------
+    1. target_fps=2 — extracts 2 frames/sec instead of 5 → 60% fewer frames.
+    2. Batch Vertex AI calls — packs BATCH_SIZE frames into one HTTP predict()
+       call, cutting network round-trips by up to 10×.
     """
+    from detection.vertex_client import detector as vertex_detector, BATCH_SIZE
+    from detection.merger import merge_results
+
     db = database.SessionLocal()
     try:
         video = db.query(models.Video).filter(models.Video.id == video_id).first()
@@ -116,93 +128,92 @@ def _process_video(video_id: int, file_path: str):
             db.commit()
             return
 
+        TARGET_FPS = 2   # 2fps → ~60% fewer frames than before (was 5fps)
         logger.info(
             f"[BG] Starting analysis for video {video_id} | "
             f"{meta['duration_seconds']}s | {meta['total_frames']} frames | "
-            f"{meta['fps']} fps → extracting at 5 fps (Parallel Mode)"
+            f"{meta['fps']} fps → extracting at {TARGET_FPS} fps | "
+            f"batch_size={BATCH_SIZE}"
         )
 
         frames_analyzed = 0
-        from detection.runner import run_detection, _executor
-        from concurrent.futures import as_completed
 
-        # Use a sliding window of futures to avoid loading too many frames into RAM
-        MAX_QUEUE_SIZE = 15 
-        futures = {}
-        
-        frame_gen = extract_frames(file_path, target_fps=5)
-        
-        done_processing = False
-        while not done_processing or futures:
-            # 1. Fill the queue
-            while not done_processing and len(futures) < MAX_QUEUE_SIZE:
-                try:
-                    frame_data = next(frame_gen)
-                    fut = _executor.submit(run_detection, frame_data)
-                    futures[fut] = frame_data
-                except StopIteration:
-                    done_processing = True
+        # ── 2. Batch loop ────────────────────────────────────────────────
+        # Collect BATCH_SIZE frames, send to Vertex in one HTTP call,
+        # then save all results. This is the main speedup.
+        batch: list = []
 
-            if not futures:
-                break
+        def _process_batch(batch_frames):
+            """Send one batch to Vertex AI and save all results to DB."""
+            nonlocal frames_analyzed
 
-            # 2. Wait for at least one result
-            # We use a short timeout so we can keep filling the queue
-            completed = []
-            try:
-                # Get the first one that finishes
-                first_finished = next(as_completed(futures.keys(), timeout=1.0))
-                completed.append(first_finished)
-            except Exception:
-                # Timeout or empty, just loop back
-                pass
-
-            for fut in completed:
-                frame_data = futures.pop(fut)
-                try:
-                    result: FrameResult = fut.result()
-                    
-                    # ── 3. Save FrameResult to DB ───────────────────────────────
-                    db_frame = models.FrameResult(
-                        video_id=video_id,
-                        camera_id=None,
-                        frame_id=result.frame_id,
-                        timestamp=result.timestamp,
-                        threat_level=result.threat_level,
-                        threat_label=result.threat_label,
-                        detections=result.to_dict(),
-                    )
-                    db.add(db_frame)
-
-                    # ── 4. Save alert rows for threat_level >= 2 ────────────────
-                    if result.threat_level >= 2:
-                        db_alert = models.Alert(
-                            video_id=video_id,
-                            camera_id=None,
-                            timestamp=result.timestamp,
-                            threat_level=result.threat_level,
-                            threat_label=result.threat_label,
-                        )
-                        db.add(db_alert)
-
+            if vertex_detector.use_vertex:
+                # ONE HTTP round-trip for all frames in the batch
+                batch_results = vertex_detector.detect_batch(batch_frames)
+                for frame_data, (obj_dets, weapon_dets, fire_dets) in zip(batch_frames, batch_results):
+                    result: FrameResult = merge_results(frame_data, obj_dets, weapon_dets, fire_dets)
+                    _save_result(result)
+                    frames_analyzed += 1
+            else:
+                # Fallback: local detectors (CPU), one at a time
+                for frame_data in batch_frames:
+                    result: FrameResult = run_detection(frame_data)
+                    _save_result(result)
                     frames_analyzed += 1
 
-                    # Commit in batches of 10 for better UI responsiveness
-                    if frames_analyzed % 10 == 0:
-                        video.frames_analyzed = frames_analyzed
-                        db.commit()
-                        logger.info(
-                            f"[BG] Video {video_id}: {frames_analyzed} frames analyzed..."
-                        )
+            # Commit after each batch and update progress
+            video.frames_analyzed = frames_analyzed
+            db.commit()
+            logger.info(f"[BG] Video {video_id}: {frames_analyzed} frames analyzed...")
 
+        def _save_result(result: FrameResult):
+            """Persist a single FrameResult (and optional Alert) to DB."""
+            db_frame = models.FrameResult(
+                video_id=video_id,
+                camera_id=None,
+                frame_id=result.frame_id,
+                timestamp=result.timestamp,
+                threat_level=result.threat_level,
+                threat_label=result.threat_label,
+                detections=result.to_dict(),
+            )
+            db.add(db_frame)
+
+            if result.threat_level >= 2:
+                db_alert = models.Alert(
+                    video_id=video_id,
+                    camera_id=None,
+                    timestamp=result.timestamp,
+                    threat_level=result.threat_level,
+                    threat_label=result.threat_label,
+                )
+                db.add(db_alert)
+
+        # ── 3. Iterate frames and fill batches ───────────────────────────
+        for frame_data in extract_frames(file_path, target_fps=TARGET_FPS):
+            batch.append(frame_data)
+            if len(batch) >= BATCH_SIZE:
+                try:
+                    _process_batch(batch)
                 except Exception as e:
-                    logger.warning(f"[BG] Detection failed on frame {frame_data.frame_number}: {e}")
+                    logger.warning(f"[BG] Batch failed for video {video_id}: {e}")
+                batch = []
+
+        # ── 4. Flush any remaining frames (last partial batch) ───────────
+        if batch:
+            try:
+                _process_batch(batch)
+            except Exception as e:
+                logger.warning(f"[BG] Final batch failed for video {video_id}: {e}")
 
         # ── 5. Final commit + mark completed ────────────────────────────
         video.frames_analyzed = frames_analyzed
         video.status = "completed"
         db.commit()
-        logger.info(f"[BG] Video {video_id} analysis complete. {frames_analyzed} frames processed.")
+        logger.info(
+            f"[BG] Video {video_id} analysis complete. "
+            f"{frames_analyzed} frames processed in {BATCH_SIZE}-frame batches."
+        )
 
     except Exception as e:
         logger.error(f"[BG] Unexpected error processing video {video_id}: {e}", exc_info=True)
@@ -332,8 +343,8 @@ def get_video_status(video_id: int, db: Session = Depends(get_db)):
 
     total    = video.total_frames or 0
     analyzed = video.frames_analyzed or 0
-    # Progress is based on analyzed vs expected extracted frames (at 5fps)
-    extracted_expected = max(1, round(total / max(1, (video.fps or 30) / 5)))
+    # Progress: analyzed vs expected extracted frames (at 2fps — matches TARGET_FPS in _process_video)
+    extracted_expected = max(1, round(total / max(1, (video.fps or 30) / 2)))
     progress_pct = min(100, round((analyzed / extracted_expected) * 100)) if extracted_expected else 0
 
     return {

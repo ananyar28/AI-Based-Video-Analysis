@@ -37,7 +37,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_TARGET_FPS   = 5      # frames per second to push to detection
+DEFAULT_TARGET_FPS   = 1      # frames per second to push to detection
+                              # NOTE: 1fps is safe at current Vertex AI latency (~0.87s/frame).
+                              # Raise to 2-3fps after enabling batch detection in vertex_client.py.
 STREAM_OPEN_TIMEOUT  = 5.0    # seconds to wait when validating a stream URL
 QUEUE_MAX_SIZE       = 30     # frames buffered between capture & detection
 WORKER_QUEUE_TIMEOUT = 1.0    # seconds worker waits before checking stop_event

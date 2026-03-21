@@ -374,45 +374,43 @@ const VideoUpload: React.FC = () => {
                                     <div className="processing-info">
                                         <p className="processing-title">AegisVision Threat Engine active</p>
                                         <p className="processing-subtitle">
-                                            Performing consolidated security scan...
+                                            {(!status || status.frames_analyzed === 0)
+                                                ? 'Initializing AI models and extracting frames…'
+                                                : 'Performing consolidated security scan…'}
                                         </p>
                                     </div>
 
-                                    {status && (
-                                        <>
-                                            <div className="progress-container">
-                                                <div className="progress-header">
-                                                    <span>Progress</span>
-                                                    <span className="progress-pct">{status.progress_pct}%</span>
-                                                </div>
-                                                <div className="progress-bar-track">
-                                                    <div
-                                                        className="progress-bar-fill"
-                                                        style={{ width: `${status.progress_pct}%` }}
-                                                    />
-                                                </div>
-                                            </div>
+                                    <div className="progress-container">
+                                        <div className="progress-header">
+                                            <span>Progress</span>
+                                            <span className="progress-pct">{status?.progress_pct ?? 0}%</span>
+                                        </div>
+                                        <div className="progress-bar-track">
+                                            <div
+                                                className="progress-bar-fill"
+                                                style={{ width: `${status?.progress_pct ?? 0}%` }}
+                                            />
+                                        </div>
+                                    </div>
 
-                                            <div className="processing-stats">
-                                                <div className="proc-stat">
-                                                    <span className="proc-stat-value">{status.frames_analyzed}</span>
-                                                    <span className="proc-stat-label">Frames analyzed</span>
-                                                </div>
-                                                {status.duration_seconds != null && (
-                                                    <div className="proc-stat">
-                                                        <span className="proc-stat-value">{status.duration_seconds.toFixed(1)}s</span>
-                                                        <span className="proc-stat-label">Video duration</span>
-                                                    </div>
-                                                )}
-                                                {status.resolution && (
-                                                    <div className="proc-stat">
-                                                        <span className="proc-stat-value">{status.resolution}</span>
-                                                        <span className="proc-stat-label">Resolution</span>
-                                                    </div>
-                                                )}
+                                    <div className="processing-stats">
+                                        <div className="proc-stat">
+                                            <span className="proc-stat-value">{status?.frames_analyzed ?? 0}</span>
+                                            <span className="proc-stat-label">Frames analyzed</span>
+                                        </div>
+                                        {status?.duration_seconds != null && (
+                                            <div className="proc-stat">
+                                                <span className="proc-stat-value">{status.duration_seconds.toFixed(1)}s</span>
+                                                <span className="proc-stat-label">Video duration</span>
                                             </div>
-                                        </>
-                                    )}
+                                        )}
+                                        {status?.resolution && (
+                                            <div className="proc-stat">
+                                                <span className="proc-stat-value">{status.resolution}</span>
+                                                <span className="proc-stat-label">Resolution</span>
+                                            </div>
+                                        )}
+                                    </div>
 
                                     <div className="spinner" />
                                 </div>

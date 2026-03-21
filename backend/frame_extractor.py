@@ -20,7 +20,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov"}
 MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024   # 500 MB
-DEFAULT_TARGET_FPS = 5                    # frames per second to extract
+DEFAULT_TARGET_FPS = 2                    # frames per second to extract (2fps balances speed vs accuracy)
 
 
 # ---------------------------------------------------------------------------

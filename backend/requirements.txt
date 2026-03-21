@@ -9,3 +9,5 @@ ultralytics
 opencv-python
 aiofiles
 python-dotenv
+google-cloud-aiplatform
+Pillow

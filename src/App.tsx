@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
@@ -13,6 +14,13 @@ import AlertsReports from './components/AlertsReports';
 import './App.css';
 
 function App() {
+  useEffect(() => {
+    // Redirect to home page on refresh or initial load if not already there
+    if (window.location.pathname !== '/') {
+      window.location.replace('/');
+    }
+  }, []);
+
   return (
     <Router>
       <div className="app-container">

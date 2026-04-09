@@ -114,6 +114,7 @@ class FrameResult:
     trackable_objects: List[Detection] = field(default_factory=list)
     alert_objects: List[Detection] = field(default_factory=list)
     tracked_objects: List[dict] = field(default_factory=list)
+    events: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-safe dict for database storage."""
@@ -141,4 +142,5 @@ class FrameResult:
             "trackable_objects": det_list(self.trackable_objects),
             "alert_objects":     det_list(self.alert_objects),
             "tracked_objects":   self.tracked_objects,
+            "events":            self.events,
         }

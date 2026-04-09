@@ -33,9 +33,11 @@ from stream_extractor import StreamExtractor, validate_stream_url
 from detection.runner import run_detection
 from detection.schemas import FrameResult
 from tracking import Tracker
+from event_detection import EventEngine
 import threading
 
 global_tracker = Tracker()
+global_event_engine = EventEngine()
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -72,6 +74,7 @@ app.add_middleware(
 def init_tracker():
     """Non-blocking tracker embedder initialization."""
     threading.Thread(target=global_tracker.initialize, daemon=True).start()
+    threading.Thread(target=global_event_engine.initialize, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +166,8 @@ def _process_video(video_id: int, file_path: str):
                 for frame_data, (obj_dets, weapon_dets, fire_dets) in zip(batch_frames, batch_results):
                     result: FrameResult = merge_results(frame_data, obj_dets, weapon_dets, fire_dets)
                     result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
+                    event_payload = global_event_engine.process_frame(result.tracked_objects, frame_data.frame_number, frame_data.timestamp)
+                    result.events = event_payload["events"]
                     _save_result(result)
                     frames_analyzed += 1
             else:
@@ -170,6 +175,8 @@ def _process_video(video_id: int, file_path: str):
                 for frame_data in batch_frames:
                     result: FrameResult = run_detection(frame_data)
                     result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
+                    event_payload = global_event_engine.process_frame(result.tracked_objects, frame_data.frame_number, frame_data.timestamp)
+                    result.events = event_payload["events"]
                     _save_result(result)
                     frames_analyzed += 1
 
@@ -198,6 +205,21 @@ def _process_video(video_id: int, file_path: str):
                     timestamp=result.timestamp,
                     threat_level=result.threat_level,
                     threat_label=result.threat_label,
+                )
+                db.add(db_alert)
+                
+            for ev in result.events:
+                ev_type = ev['event_type']
+                t_level = 2
+                if ev_type == "ABANDONED_OBJECT": t_level = 3
+                if ev_type == "FIGHT_ASSAULT": t_level = 4
+                
+                db_alert = models.Alert(
+                    video_id=video_id,
+                    camera_id=None,
+                    timestamp=ev['timestamp'],
+                    threat_level=t_level,
+                    threat_label=ev_type,
                 )
                 db.add(db_alert)
 

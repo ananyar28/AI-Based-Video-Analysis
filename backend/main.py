@@ -32,6 +32,10 @@ from frame_extractor import validate_video_file, extract_frames, get_video_metad
 from stream_extractor import StreamExtractor, validate_stream_url
 from detection.runner import run_detection
 from detection.schemas import FrameResult
+from tracking import Tracker
+import threading
+
+global_tracker = Tracker()
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -63,6 +67,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def init_tracker():
+    """Non-blocking tracker embedder initialization."""
+    threading.Thread(target=global_tracker.initialize, daemon=True).start()
+
 
 # ---------------------------------------------------------------------------
 # Upload config
@@ -152,12 +162,14 @@ def _process_video(video_id: int, file_path: str):
                 batch_results = vertex_detector.detect_batch(batch_frames)
                 for frame_data, (obj_dets, weapon_dets, fire_dets) in zip(batch_frames, batch_results):
                     result: FrameResult = merge_results(frame_data, obj_dets, weapon_dets, fire_dets)
+                    result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
                     _save_result(result)
                     frames_analyzed += 1
             else:
                 # Fallback: local detectors (CPU), one at a time
                 for frame_data in batch_frames:
                     result: FrameResult = run_detection(frame_data)
+                    result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
                     _save_result(result)
                     frames_analyzed += 1
 

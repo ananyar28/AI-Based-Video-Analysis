@@ -17,12 +17,13 @@ import uuid
 import logging
 import asyncio
 from datetime import datetime
+import time
 from typing import Dict
 
 from dotenv import load_dotenv
 load_dotenv()  # Load Vertex AI config from .env
 
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ from detection.schemas import FrameResult
 from tracking import Tracker
 from event_detection import EventEngine
 import threading
+from ws_manager import manager as ws_manager
 
 global_tracker = Tracker()
 global_event_engine = EventEngine()
@@ -70,11 +72,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def prewarm_vertex():
+    """Send a dummy payload to Vertex AI to eliminate cold start."""
+    from detection.vertex_client import detector as vertex_detector
+    from frame_extractor import FrameData
+    import numpy as np
+
+    if vertex_detector.use_vertex:
+        logger.info("[Vertex] Pre-warming endpoint to eliminate cold start...")
+        try:
+            # 1x1 black pixel
+            dummy_image = np.zeros((1, 1, 3), dtype=np.uint8)
+            dummy_frame = FrameData(
+                frame_number=0,
+                timestamp=0.0,
+                image=dummy_image,
+                video_metadata={},
+                camera_id=None
+            )
+            # Catch exceptions here so we don't crash the thread silently,
+            # but we also don't want to crash the server if pre-warming fails
+            # (e.g., if traffic split is not set yet)
+            try:
+                vertex_detector.detect_batch([dummy_frame])
+                logger.info("[Vertex] Endpoint pre-warming successful.")
+            except Exception as inner_e:
+                logger.warning(f"[Vertex] Pre-warming failed: {inner_e}")
+                
+        except Exception as e:
+            logger.warning(f"[Vertex] Pre-warming setup failed: {e}")
+
 @app.on_event("startup")
-def init_tracker():
-    """Non-blocking tracker embedder initialization."""
+def on_startup():
+    """Non-blocking initializations: tracker, event engine, and Vertex AI pre-warming."""
     threading.Thread(target=global_tracker.initialize, daemon=True).start()
     threading.Thread(target=global_event_engine.initialize, daemon=True).start()
+    threading.Thread(target=prewarm_vertex, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -155,14 +188,23 @@ def _process_video(video_id: int, file_path: str):
         # Collect BATCH_SIZE frames, send to Vertex in one HTTP call,
         # then save all results. This is the main speedup.
         batch: list = []
+        batch_start_time = time.time()
 
         def _process_batch(batch_frames):
             """Send one batch to Vertex AI and save all results to DB."""
-            nonlocal frames_analyzed
+            nonlocal frames_analyzed, batch_start_time
+            
+            t_extract = time.time() - batch_start_time
+            logger.info(f"[BG] Frame extraction for {len(batch_frames)} frames took {t_extract:.3f}s")
 
             if vertex_detector.use_vertex:
                 # ONE HTTP round-trip for all frames in the batch
+                t_vertex_start = time.time()
                 batch_results = vertex_detector.detect_batch(batch_frames)
+                t_vertex = time.time() - t_vertex_start
+                logger.info(f"[BG] Vertex AI detect_batch took {t_vertex:.3f}s")
+                
+                t_track_start = time.time()
                 for frame_data, (obj_dets, weapon_dets, fire_dets) in zip(batch_frames, batch_results):
                     result: FrameResult = merge_results(frame_data, obj_dets, weapon_dets, fire_dets)
                     result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
@@ -170,8 +212,11 @@ def _process_video(video_id: int, file_path: str):
                     result.events = event_payload["events"]
                     _save_result(result)
                     frames_analyzed += 1
+                t_track = time.time() - t_track_start
+                logger.info(f"[BG] Tracking & DB save took {t_track:.3f}s")
             else:
                 # Fallback: local detectors (CPU), one at a time
+                t_local_start = time.time()
                 for frame_data in batch_frames:
                     result: FrameResult = run_detection(frame_data)
                     result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
@@ -179,11 +224,16 @@ def _process_video(video_id: int, file_path: str):
                     result.events = event_payload["events"]
                     _save_result(result)
                     frames_analyzed += 1
+                t_local = time.time() - t_local_start
+                logger.info(f"[BG] Local CPU detection & tracking took {t_local:.3f}s")
 
             # Commit after each batch and update progress
             video.frames_analyzed = frames_analyzed
             db.commit()
             logger.info(f"[BG] Video {video_id}: {frames_analyzed} frames analyzed...")
+            
+            # Reset extraction timer for the next batch
+            batch_start_time = time.time()
 
         def _save_result(result: FrameResult):
             """Persist a single FrameResult (and optional Alert) to DB."""
@@ -224,14 +274,21 @@ def _process_video(video_id: int, file_path: str):
                 db.add(db_alert)
 
         # ── 3. Iterate frames and fill batches ───────────────────────────
+        is_first_batch = True
         for frame_data in extract_frames(file_path, target_fps=TARGET_FPS):
             batch.append(frame_data)
-            if len(batch) >= BATCH_SIZE:
+            
+            # Dynamic batch sizing: first batch is smaller for immediate UI feedback
+            current_target_size = 2 if is_first_batch else BATCH_SIZE
+            
+            if len(batch) >= current_target_size:
                 try:
                     _process_batch(batch)
                 except Exception as e:
                     logger.warning(f"[BG] Batch failed for video {video_id}: {e}")
+                    raise e
                 batch = []
+                is_first_batch = False
 
         # ── 4. Flush any remaining frames (last partial batch) ───────────
         if batch:
@@ -239,6 +296,7 @@ def _process_video(video_id: int, file_path: str):
                 _process_batch(batch)
             except Exception as e:
                 logger.warning(f"[BG] Final batch failed for video {video_id}: {e}")
+                raise e
 
         # ── 5. Final commit + mark completed ────────────────────────────
         video.frames_analyzed = frames_analyzed
@@ -502,7 +560,31 @@ def start_stream(
     db.commit()
 
     # Create and start extractor
-    extractor = StreamExtractor(url=stream_url, camera_id=camera_id, target_fps=target_fps)
+    def stream_callback(result: FrameResult, frame_data):
+        # We also need to save to DB (simulating what was there before, if needed, though previously stream wasn't saving to DB in the worker, wait, stream didn't save to DB before).
+        width = frame_data.video_metadata.get("width", 1920)
+        height = frame_data.video_metadata.get("height", 1080)
+        metadata = {
+            "type": "metadata",
+            "camera_id": camera_id,
+            "frame_id": frame_data.frame_number,
+            "timestamp": frame_data.timestamp,
+            "threat_level": result.threat_level,
+            "threat_label": result.threat_label,
+            "tracked_objects": result.tracked_objects,
+            "events": result.events,
+            "resolution": {"width": width, "height": height}
+        }
+        
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(ws_manager.broadcast_metadata(camera_id, metadata))
+            loop.close()
+        except Exception as e:
+            logger.error(f"[WebSocket] Broadcast failed for {camera_id}: {e}")
+
+    extractor = StreamExtractor(url=stream_url, camera_id=camera_id, target_fps=target_fps, on_result=stream_callback)
     extractor.start()
     active_streams[camera_id] = extractor
 
@@ -550,3 +632,21 @@ def get_stream_status(camera_id: str):
         raise HTTPException(status_code=404, detail=f"Stream '{camera_id}' not found or not running.")
 
     return active_streams[camera_id].status()
+
+
+# ---------------------------------------------------------------------------
+# Stream — WebSocket (Metadata)
+# ---------------------------------------------------------------------------
+@app.websocket("/ws/stream/{camera_id}")
+async def websocket_endpoint(websocket: WebSocket, camera_id: str):
+    """
+    WebSocket endpoint for real-time AI metadata broadcast.
+    Client connects and listens for JSON payloads containing bounding boxes and events.
+    """
+    await ws_manager.connect(websocket, camera_id)
+    try:
+        while True:
+            # We don't expect the client to send anything, but we must await to keep the connection open
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, camera_id)

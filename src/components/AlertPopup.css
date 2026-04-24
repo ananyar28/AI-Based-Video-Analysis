@@ -1,0 +1,98 @@
+.alert-popup-container {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 100;
+    pointer-events: none; /* Let clicks pass through to video */
+}
+
+.alert-popup {
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--surface-border);
+    border-left: 4px solid var(--accent-color);
+    border-radius: 8px;
+    padding: 12px 16px;
+    width: 320px;
+    box-shadow: var(--shadow-md);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    animation: slideIn 0.3s ease-out forwards;
+    pointer-events: auto; /* Re-enable clicks for the close button */
+    position: relative;
+    overflow: hidden;
+}
+
+.alert-popup.level-2 { border-left-color: #f59e0b; }
+.alert-popup.level-3 { border-left-color: #f97316; }
+.alert-popup.level-4 { border-left-color: #ef4444; }
+.alert-popup.level-5 { 
+    border-left-color: #ef4444;
+    animation: slideIn 0.3s ease-out forwards, pulseCritical 2s infinite;
+}
+
+.alert-content {
+    flex: 1;
+}
+
+.alert-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.alert-label {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.alert-time {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.alert-details {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.alert-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 4px;
+    transition: color 0.2s;
+}
+
+.alert-close:hover {
+    color: var(--text-primary);
+}
+
+/* Animations */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes pulseCritical {
+    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { startStream, stopStream, getStreamStatus, type StreamStatusResponse } from '../services/api';
+import { startStream, stopStream, getStreamStatus } from '../services/api';
+import LiveStreamDashboard from './LiveStreamDashboard';
 import './VideoUpload.css'; // Reuse styles for consistency
 
 const LiveStreamAnalysis: React.FC = () => {
@@ -8,7 +9,6 @@ const LiveStreamAnalysis: React.FC = () => {
     const [cameraId, setCameraId] = useState('');
     const [phase, setPhase] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState('');
-    const [status, setStatus] = useState<StreamStatusResponse | null>(null);
 
     // Refs
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -16,10 +16,6 @@ const LiveStreamAnalysis: React.FC = () => {
     const streamRef = useRef<MediaStream | null>(null);
 
     const stopVideoTracks = () => {
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-        }
         if (videoRef.current) {
             videoRef.current.srcObject = null;
         }
@@ -43,7 +39,7 @@ const LiveStreamAnalysis: React.FC = () => {
     const handleStart = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        let targetUrl = url;
+        let targetUrl = url.replace(/\s+/g, '');
         if (sourceType === 'webcam') {
             targetUrl = '0'; // Default webcam index for OpenCV
         } else if (!url) {
@@ -56,19 +52,8 @@ const LiveStreamAnalysis: React.FC = () => {
         setPhase('connecting');
         setErrorMsg('');
 
-        // If webcam, request browser video feed for preview
-        if (sourceType === 'webcam') {
-            try {
-                const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                streamRef.current = mediaStream;
-                if (videoRef.current) {
-                    videoRef.current.srcObject = mediaStream;
-                }
-            } catch (err) {
-                console.warn("Could not access local webcam preview", err);
-                // We proceed anyway, maybe the backend running locally can still access it.
-            }
-        }
+        // Removed getUserMedia call here to prevent hardware lock contention 
+        // with the Python backend cv2.VideoCapture(0).
 
         try {
             await startStream(targetUrl, id, 5); // Target 5 FPS
@@ -78,7 +63,6 @@ const LiveStreamAnalysis: React.FC = () => {
             pollRef.current = setInterval(async () => {
                 try {
                     const st = await getStreamStatus(id);
-                    setStatus(st);
                     if (!st.is_running) {
                         stopPolling();
                         stopVideoTracks();
@@ -107,12 +91,22 @@ const LiveStreamAnalysis: React.FC = () => {
         stopVideoTracks();
 
         setPhase('idle');
-        setStatus(null);
-        setCameraId('');
         if (sourceType === 'url') {
             setUrl('');
         }
     };
+
+    if (phase === 'streaming') {
+        return (
+            <LiveStreamDashboard 
+                cameraId={cameraId}
+                sourceType={sourceType}
+                url={url}
+                mediaStream={streamRef.current}
+                onStop={handleStop}
+            />
+        );
+    }
 
     return (
         <section className="video-upload-section">
@@ -146,9 +140,12 @@ const LiveStreamAnalysis: React.FC = () => {
                                     </div>
 
                                     {sourceType === 'webcam' ? (
-                                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-                                            Select "Local Webcam" to use your device's built-in camera for real-time threat detection.
-                                        </p>
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                            <p>Select "Local Webcam" to use your device's built-in camera.</p>
+                                            <div style={{ background: 'rgba(245, 158, 11, 0.1)', borderLeft: '3px solid #f59e0b', padding: '8px 12px', borderRadius: '4px' }}>
+                                                <strong>Note:</strong> To prevent hardware freezing, the browser preview is disabled while the AI backend takes exclusive control of the camera. You will see AI metadata floating on a black canvas.
+                                            </div>
+                                        </div>
                                     ) : (
                                         <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                                             Enter an RTSP, HTTP(S) URL to begin real-time analysis on a remote IP Camera.
@@ -198,20 +195,18 @@ const LiveStreamAnalysis: React.FC = () => {
                         </form>
                     </div>
 
-                    {/* Right: Status Summary & Video Feed */}
+                    {/* Right: Status Summary (Empty/Connecting/Error state) */}
                     <div className="summary-card" style={{ flex: 1.5, minWidth: '400px' }}>
                         <div className="summary-header">
                             <h3>Live Status</h3>
-                            <span className={`status-badge ${phase === 'streaming' ? 'success' : phase === 'error' ? 'error' : ''}`}>
+                            <span className={`status-badge ${phase === 'error' ? 'error' : ''}`}>
                                 {phase === 'idle' && 'Disconnected'}
                                 {phase === 'connecting' && 'Connecting...'}
-                                {phase === 'streaming' && 'Live'}
                                 {phase === 'error' && 'Error'}
                             </span>
                         </div>
 
                         <div className="summary-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                            {/* Video Preview Box */}
                             <div style={{
                                 background: '#000',
                                 borderRadius: '8px',
@@ -229,27 +224,16 @@ const LiveStreamAnalysis: React.FC = () => {
                                     autoPlay
                                     playsInline
                                     muted
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: (phase === 'streaming' || phase === 'connecting') && sourceType === 'webcam' ? 'block' : 'none' }}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: phase === 'connecting' && sourceType === 'webcam' ? 'block' : 'none' }}
                                 />
 
-                                {((phase === 'idle' || phase === 'error') || sourceType === 'url') && (
+                                {(phase === 'idle' || phase === 'error' || sourceType === 'url') && (
                                     <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
-                                        {sourceType === 'url' ? (
-                                            phase === 'streaming' ? 'Analysis running on remote stream...' : 'Awaiting Connection...'
-                                        ) : (
-                                            phase === 'error' ? errorMsg : 'Camera feed will appear here'
-                                        )}
-                                    </div>
-                                )}
-
-                                {phase === 'streaming' && sourceType === 'webcam' && (
-                                    <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(239, 68, 68, 0.8)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-                                        ● REC
+                                        {sourceType === 'url' ? 'Awaiting Connection...' : (phase === 'error' ? errorMsg : 'AI Backend taking control of webcam...')}
                                     </div>
                                 )}
                             </div>
 
-                            {/* Status Stats */}
                             {phase === 'connecting' && (
                                 <div className="pre-analysis-state" style={{ flex: 1 }}>
                                     <p>Initializing Connection...</p>
@@ -262,29 +246,6 @@ const LiveStreamAnalysis: React.FC = () => {
                                     <div className="result-banner error-banner">
                                         <span className="dot" />
                                         <span>{errorMsg}</span>
-                                    </div>
-                                </div>
-                            )}
-
-                            {phase === 'streaming' && status && (
-                                <div className="processing-state" style={{ paddingTop: '0', flex: 1 }}>
-                                    <div className="processing-stats" style={{ flexWrap: 'wrap', gap: '10px' }}>
-                                        <div className="proc-stat" style={{ flex: 1, padding: '10px' }}>
-                                            <span className="proc-stat-value">{status.frames_captured}</span>
-                                            <span className="proc-stat-label">Captured</span>
-                                        </div>
-                                        <div className="proc-stat" style={{ flex: 1, padding: '10px' }}>
-                                            <span className="proc-stat-value">{status.frames_processed}</span>
-                                            <span className="proc-stat-label">Analyzed</span>
-                                        </div>
-                                        <div className="proc-stat" style={{ flex: 1, padding: '10px' }}>
-                                            <span className="proc-stat-value">{status.uptime_seconds.toFixed(1)}s</span>
-                                            <span className="proc-stat-label">Uptime</span>
-                                        </div>
-                                    </div>
-
-                                    <div style={{ marginTop: '1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                                        <p>Target FPS: {status.target_fps} | Stream ID: {status.camera_id}</p>
                                     </div>
                                 </div>
                             )}

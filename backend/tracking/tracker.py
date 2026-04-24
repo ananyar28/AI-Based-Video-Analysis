@@ -66,8 +66,8 @@ class Tracker:
             output_objects.append({
                 "id": track_id,
                 "class": class_name,
-                "bbox": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)], # Format as LTRB to match prompt "bbox": [x1, y1, x2, y2]
-                "center": [round(center_x, 2), round(center_y, 2)],
+                "bbox": [float(round(x1, 2)), float(round(y1, 2)), float(round(x2, 2)), float(round(y2, 2))],
+                "center": [float(round(center_x, 2)), float(round(center_y, 2))],
                 "confidence": round(float(confidence), 4),
                 "timestamp": frame_data.timestamp,
                 "frame_id": frame_data.frame_number

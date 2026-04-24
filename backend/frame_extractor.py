@@ -178,11 +178,20 @@ def extract_frames(
     interval = max(1, round(native_fps / target_fps))
     
     current_frame = 0
+    frames_read_count = 0
     try:
         while current_frame < total_frames:
-            # Fast seek to the target frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+            # Fast seek using grab() instead of cap.set
+            # cap.set(cv2.CAP_PROP_POS_FRAMES) forces a slow seek from the nearest keyframe,
+            # whereas sequential grab() is extremely fast and avoids decoding overhead.
+            while frames_read_count < current_frame:
+                if not cap.grab():
+                    break
+                frames_read_count += 1
+                
             success, frame = cap.read()
+            frames_read_count += 1
+            
             if not success:
                 break
 

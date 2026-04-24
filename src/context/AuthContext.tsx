@@ -21,7 +21,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // Check local storage on mount to persist login
     useEffect(() => {
-        const storedUser = localStorage.getItem('aegis_user');
+        const storedUser = sessionStorage.getItem('aegis_user');
         if (storedUser) {
             try {
                 setUser(JSON.parse(storedUser));
@@ -33,12 +33,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const login = (userData: User) => {
         setUser(userData);
-        localStorage.setItem('aegis_user', JSON.stringify(userData));
+        sessionStorage.setItem('aegis_user', JSON.stringify(userData));
     };
 
     const logout = () => {
         setUser(null);
-        localStorage.removeItem('aegis_user');
+        sessionStorage.removeItem('aegis_user');
     };
 
     return (

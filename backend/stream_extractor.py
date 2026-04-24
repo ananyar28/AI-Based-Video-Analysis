@@ -120,7 +120,7 @@ class StreamExtractor:
     camera_id   : str        — unique identifier for this stream
     target_fps  : int        — frames per second to process (default: 5)
     on_result   : callable   — optional callback invoked with each FrameResult
-                               after detection; signature: on_result(FrameResult)
+                               and FrameData after detection; signature: on_result(FrameResult, FrameData)
     """
 
     def __init__(
@@ -254,11 +254,17 @@ class StreamExtractor:
             drop the OLDEST frame to make room for the newest one.
             This ensures the system always works on the most recent view.
         """
-        cap = cv2.VideoCapture(self.url)
+        cap = None
+        for attempt in range(5):
+            cap = cv2.VideoCapture(self.url)
+            if cap.isOpened():
+                break
+            logger.warning(f"[{self.camera_id}] Capture thread: failed to open, retrying ({attempt+1}/5)...")
+            time.sleep(1.0)
 
-        if not cap.isOpened():
+        if cap is None or not cap.isOpened():
             logger.error(
-                f"[{self.camera_id}] Capture thread: failed to open stream: {self.url}"
+                f"[{self.camera_id}] Capture thread: completely failed to open stream: {self.url}"
             )
             return
 
@@ -287,10 +293,11 @@ class StreamExtractor:
 
             if not success:
                 logger.warning(
-                    f"[{self.camera_id}] Frame read failed — stream may have ended or dropped."
+                    f"[{self.camera_id}] Frame read failed — attempting to reconnect..."
                 )
-                # Brief pause before retrying (avoids tight spin on dead stream)
-                time.sleep(0.5)
+                cap.release()
+                time.sleep(1.0)
+                cap = cv2.VideoCapture(self.url)
                 continue
 
             self.frames_captured += 1
@@ -365,9 +372,9 @@ class StreamExtractor:
                     result = runner(frame_data)
                     self.frames_processed += 1
 
-                    # Call result hook if provided (e.g. to save to DB)
+                    # Call result hook if provided (e.g. to send via WebSocket)
                     if self.on_result:
-                        self.on_result(result)
+                        self.on_result(result, frame_data)
                 else:
                     # Phase 2 not ready — just count and move on
                     self.frames_processed += 1

@@ -91,6 +91,36 @@ export interface StreamStatusResponse {
     errors: number;
 }
 
+// ─── WebSocket Types ─────────────────────────────────────
+
+export interface TrackedObject {
+    id: number;
+    class: string;
+    bbox: number[]; // [x1, y1, x2, y2]
+    center: number[];
+    confidence: number;
+}
+
+export interface EventItem {
+    event_type: string;
+    confidence: number;
+    object_ids: number[];
+    timestamp: number;
+    frame_id: number;
+}
+
+export interface WSMetadataPayload {
+    type: 'metadata';
+    camera_id: string;
+    frame_id: number;
+    timestamp: number;
+    threat_level: number;
+    threat_label: string;
+    tracked_objects: TrackedObject[];
+    events: EventItem[];
+    resolution: { width: number; height: number };
+}
+
 // ─── API Functions ───────────────────────────────────────
 
 /**
@@ -196,4 +226,11 @@ export async function getStreamStatus(cameraId: string): Promise<StreamStatusRes
     }
 
     return res.json();
+}
+
+/**
+ * Get the WebSocket URL for streaming AI metadata.
+ */
+export function getStreamWSUrl(cameraId: string): string {
+    return `ws://localhost:8000/ws/stream/${encodeURIComponent(cameraId)}`;
 }

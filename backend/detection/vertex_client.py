@@ -132,8 +132,7 @@ class VertexDetector:
 
         except Exception as e:
             logger.error(f"[Vertex] Batch prediction failed: {e}")
-            # Return empty detections for each frame so the pipeline continues
-            return [([], [], [])] * len(frame_data_list)
+            raise e
 
 
 # Global instance — imported by runner.py and main.py

@@ -1,6 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import * as matchers from '@testing-library/jest-dom/matchers';
-import React from 'react';
 import { vi, describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import LiveStreamAnalysis from './LiveStreamAnalysis';
 import * as api from '../services/api';
@@ -49,9 +48,7 @@ describe('LiveStreamAnalysis Component', () => {
     expect(screen.getByPlaceholderText('e.g. rtsp://192.168.1.100:554/stream1')).toBeInTheDocument();
   });
 
-  it('handles webcam access properly and connects stream', async () => {
-    const mockStream = { getTracks: vi.fn(() => []) };
-    (navigator.mediaDevices.getUserMedia as any).mockResolvedValueOnce(mockStream);
+  it('connects stream without calling getUserMedia', async () => {
     (api.startStream as any).mockResolvedValueOnce({});
     (api.getStreamStatus as any).mockResolvedValueOnce({
       is_running: true,
@@ -74,7 +71,6 @@ describe('LiveStreamAnalysis Component', () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({ video: true });
       expect(api.startStream).toHaveBeenCalled();
     });
 
@@ -89,7 +85,6 @@ describe('LiveStreamAnalysis Component', () => {
   });
 
   it('shows error banner when starting stream fails', async () => {
-    (navigator.mediaDevices.getUserMedia as any).mockRejectedValueOnce(new Error('Permission denied'));
     (api.startStream as any).mockRejectedValueOnce(new Error('Backend error'));
 
     render(<LiveStreamAnalysis />);

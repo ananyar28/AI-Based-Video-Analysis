@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import About from './components/About';
@@ -15,10 +15,45 @@ import './App.css';
 
 function App() {
   useEffect(() => {
-    // Redirect to home page on refresh or initial load if not already there
-    if (window.location.pathname !== '/') {
-      window.location.replace('/');
-    }
+    const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+    let lastActiveTime = Date.now();
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const handleIdle = () => {
+      if (window.location.pathname !== '/') {
+        window.location.replace('/');
+        window.scrollTo(0, 0);
+      }
+    };
+
+    const resetTimer = () => {
+      lastActiveTime = Date.now();
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleIdle, IDLE_TIMEOUT_MS);
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // When user comes back to the tab, check if they've been idle for too long
+        if (Date.now() - lastActiveTime > IDLE_TIMEOUT_MS) {
+          handleIdle();
+        } else {
+          resetTimer();
+        }
+      }
+    };
+
+    resetTimer();
+
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    events.forEach(event => document.addEventListener(event, resetTimer, { passive: true }));
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(event => document.removeEventListener(event, resetTimer));
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   return (
@@ -60,6 +95,7 @@ function App() {
           } />
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <Footer />
       </div>

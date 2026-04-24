@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 const Hero: React.FC = () => {
     return (
@@ -10,7 +11,7 @@ const Hero: React.FC = () => {
                 </p>
                 <div className="hero-actions">
                     <a href="#video-analysis" className="primary-btn">Start Analysis</a>
-                    <a href="/live-stream" className="secondary-btn">Live Stream</a>
+                    <Link to="/live-stream" className="secondary-btn">Live Stream</Link>
                 </div>
             </div>
         </section>

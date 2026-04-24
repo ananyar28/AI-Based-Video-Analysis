@@ -10,16 +10,7 @@ const LiveStreamAnalysis: React.FC = () => {
     const [phase, setPhase] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState('');
 
-    // Refs
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const streamRef = useRef<MediaStream | null>(null);
-
-    const stopVideoTracks = () => {
-        if (videoRef.current) {
-            videoRef.current.srcObject = null;
-        }
-    };
 
     const stopPolling = () => {
         if (pollRef.current) {
@@ -32,9 +23,20 @@ const LiveStreamAnalysis: React.FC = () => {
     useEffect(() => {
         return () => {
             stopPolling();
-            stopVideoTracks();
+            // Important: If we are still streaming, try to stop the backend stream
+            // However, handleStop uses cameraId from state which might be unstable here.
+            // But since this is a functional component, it should have the last known value.
         };
     }, []);
+
+    // Effect to handle automatic stop on unmount if streaming
+    useEffect(() => {
+        return () => {
+            if (phase === 'streaming' && cameraId) {
+                stopStream(cameraId).catch(err => console.warn("Auto-stop failed", err));
+            }
+        };
+    }, [phase, cameraId]);
 
     const handleStart = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -63,9 +65,8 @@ const LiveStreamAnalysis: React.FC = () => {
             pollRef.current = setInterval(async () => {
                 try {
                     const st = await getStreamStatus(id);
-                    if (!st.is_running) {
+                    if (!st.running) {
                         stopPolling();
-                        stopVideoTracks();
                         setPhase('error');
                         setErrorMsg('Stream disconnected or stopped gracefully.');
                     }
@@ -76,7 +77,6 @@ const LiveStreamAnalysis: React.FC = () => {
 
         } catch (err: any) {
             setPhase('error');
-            stopVideoTracks();
             setErrorMsg(err.message || 'Failed to connect to stream.');
         }
     };
@@ -88,7 +88,6 @@ const LiveStreamAnalysis: React.FC = () => {
             console.warn("Could not stop stream cleanly", err);
         }
         stopPolling();
-        stopVideoTracks();
 
         setPhase('idle');
         if (sourceType === 'url') {
@@ -100,9 +99,6 @@ const LiveStreamAnalysis: React.FC = () => {
         return (
             <LiveStreamDashboard 
                 cameraId={cameraId}
-                sourceType={sourceType}
-                url={url}
-                mediaStream={streamRef.current}
                 onStop={handleStop}
             />
         );
@@ -142,8 +138,8 @@ const LiveStreamAnalysis: React.FC = () => {
                                     {sourceType === 'webcam' ? (
                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             <p>Select "Local Webcam" to use your device's built-in camera.</p>
-                                            <div style={{ background: 'rgba(245, 158, 11, 0.1)', borderLeft: '3px solid #f59e0b', padding: '8px 12px', borderRadius: '4px' }}>
-                                                <strong>Note:</strong> To prevent hardware freezing, the browser preview is disabled while the AI backend takes exclusive control of the camera. You will see AI metadata floating on a black canvas.
+                                            <div style={{ background: 'rgba(16, 185, 129, 0.1)', borderLeft: '3px solid var(--accent-color)', padding: '8px 12px', borderRadius: '4px' }}>
+                                                <strong>Optimized:</strong> Hardware contention is managed by our backend proxy. You will see live video and AI detections in sync.
                                             </div>
                                         </div>
                                     ) : (
@@ -219,17 +215,14 @@ const LiveStreamAnalysis: React.FC = () => {
                                 overflow: 'hidden',
                                 position: 'relative'
                             }}>
-                                <video
-                                    ref={videoRef}
-                                    autoPlay
-                                    playsInline
-                                    muted
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: phase === 'connecting' && sourceType === 'webcam' ? 'block' : 'none' }}
-                                />
-
-                                {(phase === 'idle' || phase === 'error' || sourceType === 'url') && (
+                                {phase === 'connecting' && (
                                     <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
-                                        {sourceType === 'url' ? 'Awaiting Connection...' : (phase === 'error' ? errorMsg : 'AI Backend taking control of webcam...')}
+                                        Connecting to camera via AI Proxy...
+                                    </div>
+                                )}
+                                {(phase === 'idle' || phase === 'error') && (
+                                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
+                                        {phase === 'error' ? errorMsg : 'Awaiting Connection...'}
                                     </div>
                                 )}
                             </div>

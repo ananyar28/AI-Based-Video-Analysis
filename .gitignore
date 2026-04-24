@@ -24,4 +24,26 @@ dist-ssr
 *.sw?
 
 
-*.pycP
+*.pyc
+__pycache__/
+venv/
+.venv/
+env/
+.env
+.env.*
+**/.env
+**/.env.*
+backend/__pycache__/
+backend/venv/
+backend/env/
+backend/.venv/
+*.pt
+*.json
+!package.json
+!tsconfig.json
+!package-lock.json
+!tsconfig.node.json
+!tsconfig.app.json
+!eslint.config.js
+!*.env.example
+

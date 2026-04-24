@@ -86,7 +86,7 @@ export interface StreamStatusResponse {
     target_fps: number;
     frames_captured: number;
     frames_processed: number;
-    is_running: boolean;
+    running: boolean;
     uptime_seconds: number;
     errors: number;
 }
@@ -233,4 +233,11 @@ export async function getStreamStatus(cameraId: string): Promise<StreamStatusRes
  */
 export function getStreamWSUrl(cameraId: string): string {
     return `ws://localhost:8000/ws/stream/${encodeURIComponent(cameraId)}`;
+}
+
+/**
+ * Get the Backend Video Proxy URL (MJPEG stream).
+ */
+export function getStreamVideoUrl(cameraId: string): string {
+    return `${API_BASE}/stream/${encodeURIComponent(cameraId)}/video`;
 }

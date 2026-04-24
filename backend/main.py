@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Load Vertex AI config from .env
 
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -102,12 +103,45 @@ def prewarm_vertex():
         except Exception as e:
             logger.warning(f"[Vertex] Pre-warming setup failed: {e}")
 
+async def cleanup_inactive_streams():
+    """
+    Background task that periodically checks for streams that haven't been 
+    polled or viewed recently and stops them automatically.
+    """
+    while True:
+        await asyncio.sleep(10)  # Check every 10 seconds
+        now = time.time()
+        to_stop = []
+        
+        # Check activity timestamps
+        for camera_id, extractor in active_streams.items():
+            # If no status poll or video frame request for > 15 seconds
+            if now - extractor.last_activity > 15:
+                to_stop.append(camera_id)
+        
+        for camera_id in to_stop:
+            logger.info(f"[Cleanup] Stopping inactive stream: {camera_id}")
+            extractor = active_streams.pop(camera_id, None)
+            if extractor:
+                extractor.stop()
+                # Update DB status
+                db = database.SessionLocal()
+                try:
+                    stream = db.query(models.Stream).filter(models.Stream.camera_id == camera_id).first()
+                    if stream:
+                        stream.status = "stopped"
+                        stream.stopped_at = datetime.utcnow()
+                        db.commit()
+                finally:
+                    db.close()
+
 @app.on_event("startup")
 def on_startup():
     """Non-blocking initializations: tracker, event engine, and Vertex AI pre-warming."""
     threading.Thread(target=global_tracker.initialize, daemon=True).start()
     threading.Thread(target=global_event_engine.initialize, daemon=True).start()
     threading.Thread(target=prewarm_vertex, daemon=True).start()
+    asyncio.create_task(cleanup_inactive_streams())
 
 
 # ---------------------------------------------------------------------------
@@ -650,3 +684,38 @@ async def websocket_endpoint(websocket: WebSocket, camera_id: str):
             _ = await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, camera_id)
+
+
+# ---------------------------------------------------------------------------
+# Stream — Video Proxy (MJPEG)
+# ---------------------------------------------------------------------------
+@app.get("/stream/{camera_id}/video")
+async def stream_video(camera_id: str):
+    """
+    Serves a live MJPEG video stream for a given camera_id.
+    This allows the browser to view the camera feed proxied through the backend,
+    avoiding hardware lock contention on the local webcam.
+    """
+    if camera_id not in active_streams:
+        raise HTTPException(status_code=404, detail=f"Stream '{camera_id}' not found or not running.")
+
+    extractor = active_streams[camera_id]
+
+    async def frame_generator():
+        while True:
+            # Check if stream is still active
+            if camera_id not in active_streams:
+                break
+                
+            frame_bytes = extractor.get_encoded_frame()
+            if frame_bytes:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            
+            # Control frame rate of the proxy (approx 15-20 fps is plenty for preview)
+            await asyncio.sleep(0.05)
+
+    return StreamingResponse(
+        frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )

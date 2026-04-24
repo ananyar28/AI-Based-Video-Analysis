@@ -32,25 +32,25 @@ def migrate():
         ]
         for table in tables:
             try:
-                conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-                print(f"  ✓ Dropped: {table}")
+                conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+                print(f"  [OK] Dropped: {table}")
             except Exception as e:
-                print(f"  ✗ Could not drop {table}: {e}")
+                print(f"  [ERROR] Could not drop {table}: {e}")
         conn.commit()
 
     print("\nRecreating all tables with current schema...")
     try:
         models.Base.metadata.create_all(bind=engine)
-        print("  ✓ Created: users")
-        print("  ✓ Created: videos (with fps, resolution, frames_analyzed etc.)")
-        print("  ✓ Created: frame_results")
-        print("  ✓ Created: alerts")
-        print("  ✓ Created: streams")
+        print("  [OK] Created: users")
+        print("  [OK] Created: videos (with fps, resolution, frames_analyzed etc.)")
+        print("  [OK] Created: frame_results")
+        print("  [OK] Created: alerts")
+        print("  [OK] Created: streams")
     except Exception as e:
-        print(f"  ✗ Failed to create tables: {e}")
+        print(f"  [ERROR] Failed to create tables: {e}")
         sys.exit(1)
 
-    print("\n✅ Migration complete. Database is ready.\n")
+    print("\n[OK] Migration complete. Database is ready.\n")
 
 
 if __name__ == "__main__":

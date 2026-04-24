@@ -151,6 +151,16 @@ class StreamExtractor:
         self.frames_dropped    = 0
         self._started_at: Optional[float] = None
 
+        # Capture handle (stored here so stop() can force-release it)
+        self.cap: Optional[cv2.VideoCapture] = None
+
+        # Frame caching for web proxying
+        self._latest_frame: Optional[cv2.Mat] = None
+        self._frame_lock = threading.Lock()
+
+        # Activity tracking for auto-cleanup
+        self.last_activity = time.time()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -194,6 +204,9 @@ class StreamExtractor:
         logger.info(f"[StreamExtractor] Stopping '{self.camera_id}'...")
         self._stop_event.set()
 
+        if self.cap:
+            self.cap.release()
+            
         if self._capture_thread:
             self._capture_thread.join(timeout=5.0)
         if self._worker_thread:
@@ -213,18 +226,9 @@ class StreamExtractor:
     def status(self) -> dict:
         """
         Return a status snapshot for this stream.
-
-        Returns
-        -------
-        dict with keys:
-            camera_id        : str
-            running          : bool
-            queue_size       : int   — frames currently buffered
-            frames_captured  : int   — total frames read from camera
-            frames_processed : int   — frames sent through detection
-            frames_dropped   : int   — frames discarded (queue full)
-            uptime_seconds   : float — seconds since start() was called
+        Also updates the last_activity timestamp.
         """
+        self.last_activity = time.time()
         uptime = round(time.time() - self._started_at, 1) if self._started_at else 0.0
 
         return {
@@ -236,6 +240,28 @@ class StreamExtractor:
             "frames_dropped":   self.frames_dropped,
             "uptime_seconds":   uptime,
         }
+
+    def get_encoded_frame(self) -> Optional[bytes]:
+        """
+        Returns the latest captured frame encoded as JPEG bytes.
+        Used for the MJPEG streaming proxy.
+        Also updates the last_activity timestamp.
+        """
+        self.last_activity = time.time()
+        frame = None
+        with self._frame_lock:
+            if self._latest_frame is not None:
+                frame = self._latest_frame.copy()
+        
+        if frame is None:
+            return None
+            
+        # Encode to JPEG (outside the lock to avoid blocking capture thread)
+        success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not success:
+            return None
+        
+        return buffer.tobytes()
 
     # ------------------------------------------------------------------
     # Background threads (private)
@@ -254,23 +280,23 @@ class StreamExtractor:
             drop the OLDEST frame to make room for the newest one.
             This ensures the system always works on the most recent view.
         """
-        cap = None
+        self.cap = None
         for attempt in range(5):
-            cap = cv2.VideoCapture(self.url)
-            if cap.isOpened():
+            self.cap = cv2.VideoCapture(self.url)
+            if self.cap.isOpened():
                 break
             logger.warning(f"[{self.camera_id}] Capture thread: failed to open, retrying ({attempt+1}/5)...")
             time.sleep(1.0)
 
-        if cap is None or not cap.isOpened():
+        if self.cap is None or not self.cap.isOpened():
             logger.error(
                 f"[{self.camera_id}] Capture thread: completely failed to open stream: {self.url}"
             )
             return
 
-        native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        width      = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        native_fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+        width      = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height     = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         interval   = max(1, round(native_fps / self.target_fps))
 
         metadata = {
@@ -289,20 +315,29 @@ class StreamExtractor:
         )
 
         while not self._stop_event.is_set():
-            success, frame = cap.read()
+            if self.cap is None:
+                break
+                
+            success, frame = self.cap.read()
 
             if not success:
+                if self._stop_event.is_set():
+                    break
                 logger.warning(
                     f"[{self.camera_id}] Frame read failed — attempting to reconnect..."
                 )
-                cap.release()
+                if self.cap: self.cap.release()
                 time.sleep(1.0)
-                cap = cv2.VideoCapture(self.url)
+                self.cap = cv2.VideoCapture(self.url)
                 continue
 
             self.frames_captured += 1
 
-            # Only process every Nth frame
+            # Update latest frame for proxying (every frame for smooth web preview)
+            with self._frame_lock:
+                self._latest_frame = frame.copy()
+
+            # Only process every Nth frame for AI detection
             if frame_number % interval == 0:
                 timestamp = round(frame_number / native_fps, 4)
 
@@ -330,7 +365,8 @@ class StreamExtractor:
 
             frame_number += 1
 
-        cap.release()
+        if self.cap:
+            self.cap.release()
         logger.info(f"[{self.camera_id}] Capture thread exited cleanly.")
 
     def _worker_loop(self) -> None:

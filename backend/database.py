@@ -5,9 +5,9 @@ from sqlalchemy.orm import sessionmaker
 # Default to local postgres. User needs to update password.
 # Format: postgresql://user:password@host:port/database_name
 # IMPORTANT: Replace 'password' with the password you set during installation!
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:ananya@localhost/aegis_db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./aegis_db.db"
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

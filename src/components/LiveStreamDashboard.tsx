@@ -1,18 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getStreamWSUrl, type WSMetadataPayload } from '../services/api';
+import { getStreamWSUrl, getStreamVideoUrl, type WSMetadataPayload } from '../services/api';
 import { AlertContainer, type AlertData } from './AlertPopup';
 import './LiveStreamDashboard.css';
 
 interface LiveStreamDashboardProps {
     cameraId: string;
-    sourceType: 'webcam' | 'url';
-    url: string;
-    mediaStream: MediaStream | null; // For local webcam testing
     onStop: () => void;
 }
 
-const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, sourceType, url, mediaStream, onStop }) => {
-    const videoRef = useRef<HTMLVideoElement>(null);
+const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onStop }) => {
     const imgRef = useRef<HTMLImageElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const wsRef = useRef<WebSocket | null>(null);
@@ -24,14 +20,8 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, sou
     // Stats
     const [framesAnalyzed, setFramesAnalyzed] = useState(0);
 
-    // Initialize Video
-    useEffect(() => {
-        if (videoRef.current) {
-            if (sourceType === 'webcam' && mediaStream) {
-                videoRef.current.srcObject = mediaStream;
-            }
-        }
-    }, [sourceType, mediaStream]);
+    // Backend Proxy Stream URL
+    const proxyUrl = getStreamVideoUrl(cameraId);
 
     // WebSocket Connection & Metadata Handling
     useEffect(() => {
@@ -98,10 +88,7 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, sou
         let displayWidth = 0;
         let displayHeight = 0;
 
-        if (sourceType === 'webcam' && videoRef.current) {
-            displayWidth = videoRef.current.clientWidth;
-            displayHeight = videoRef.current.clientHeight;
-        } else if (sourceType === 'url' && imgRef.current) {
+        if (imgRef.current) {
             displayWidth = imgRef.current.clientWidth;
             displayHeight = imgRef.current.clientHeight;
         }
@@ -164,22 +151,16 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, sou
                         <span>{wsStatus === 'connected' ? 'AI Sync Active' : 'Connecting AI...'}</span>
                     </div>
                     
-                    {sourceType === 'webcam' ? (
-                        <video 
-                            ref={videoRef} 
-                            className="video-element" 
-                            autoPlay 
-                            playsInline 
-                            muted 
-                        />
-                    ) : (
-                        <img 
-                            ref={imgRef}
-                            src={url}
-                            className="video-element"
-                            alt="IP Camera Feed"
-                        />
-                    )}
+                    <img 
+                        ref={imgRef}
+                        src={proxyUrl}
+                        className="video-element"
+                        alt="Live Surveillance Feed"
+                        onError={(e) => {
+                            console.error("Stream load error");
+                            (e.target as HTMLImageElement).src = 'about:blank';
+                        }}
+                    />
                     
                     {/* The transparent canvas for bounding boxes */}
                     <canvas ref={canvasRef} className="overlay-canvas" />

@@ -637,15 +637,19 @@ def start_stream(
 # ---------------------------------------------------------------------------
 @app.delete("/stream/{camera_id}")
 def stop_stream(camera_id: str, db: Session = Depends(get_db)):
-    """Stop and clean up a live stream by camera_id."""
+    """Stop and clean up a live stream by camera_id.
+    
+    This endpoint is idempotent: if the stream was already cleaned up by the
+    background idle-cleanup task, we still update the DB and return success.
+    """
     extractor = active_streams.pop(camera_id, None)
     if extractor:
         extractor.stop()
         logger.info(f"[Stream] Stopped '{camera_id}'")
     else:
-        logger.info(f"[Stream] '{camera_id}' was already stopped or not in active streams.")
+        logger.info(f"[Stream] '{camera_id}' was already stopped (likely by idle cleanup). Acknowledging delete.")
 
-    # Update DB
+    # Always sync DB status regardless of in-memory state
     stream = db.query(models.Stream).filter(models.Stream.camera_id == camera_id).first()
     if stream:
         stream.status     = "stopped"

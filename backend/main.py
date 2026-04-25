@@ -595,9 +595,16 @@ def start_stream(
 
     # Create and start extractor
     def stream_callback(result: FrameResult, frame_data):
-        # We also need to save to DB (simulating what was there before, if needed, though previously stream wasn't saving to DB in the worker, wait, stream didn't save to DB before).
+        # Run tracking and event engine
+        result.tracked_objects = global_tracker.update(result.trackable_objects, frame_data)
+        event_payload = global_event_engine.process_frame(result.tracked_objects, frame_data.frame_number, frame_data.timestamp)
+        result.events = event_payload["events"]
+
         width = frame_data.video_metadata.get("width", 1920)
         height = frame_data.video_metadata.get("height", 1080)
+        
+        all_dets = result.object_detections + result.weapon_detections + result.fire_detections
+        
         metadata = {
             "type": "metadata",
             "camera_id": camera_id,
@@ -606,6 +613,17 @@ def start_stream(
             "threat_level": result.threat_level,
             "threat_label": result.threat_label,
             "tracked_objects": result.tracked_objects,
+            "all_detections": [
+                {
+                    "class_id": d.class_id,
+                    "class_name": d.class_name,
+                    "confidence": round(d.confidence, 4),
+                    "bbox": [round(v, 2) for v in d.bbox],
+                    "track": d.track,
+                    "source": d.source
+                }
+                for d in all_dets
+            ],
             "events": result.events,
             "resolution": {"width": width, "height": height}
         }

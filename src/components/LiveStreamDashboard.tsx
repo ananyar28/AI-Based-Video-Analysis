@@ -108,10 +108,36 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onS
         const scaleX = canvas.width / metadata.resolution.width;
         const scaleY = canvas.height / metadata.resolution.height;
 
-        // Draw tracked objects
+        // Draw non-tracked detections (weapons, bags, fire, etc.)
+        if (metadata.all_detections) {
+            metadata.all_detections.forEach(det => {
+                if (det.track) return; // Skip trackable objects, handled below
+
+                const x = det.bbox[0] * scaleX;
+                const y = det.bbox[1] * scaleY;
+                const width = det.bbox[2] * scaleX;
+                const height = det.bbox[3] * scaleY;
+
+                let color = '#f59e0b'; // orange for bags, etc.
+                if (det.source === 'weapon' || det.class_name === 'fire') color = '#ef4444'; // red for weapons/fire
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, width, height);
+
+                ctx.fillStyle = color;
+                const label = `${det.class_name.toUpperCase()} ${(det.confidence * 100).toFixed(0)}%`;
+                ctx.font = '14px Arial';
+                const textWidth = ctx.measureText(label).width;
+                ctx.fillRect(x, y - 20, textWidth + 10, 20);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(label, x + 5, y - 5);
+            });
+        }
+
+        // Draw tracked objects (person, vehicles)
         metadata.tracked_objects.forEach(obj => {
-            // The bbox from tracker is [x, y, w, h] or [x1, y1, x2, y2]. 
-            // In tracker.py we returned [x1, y1, x2, y2]
+            // The bbox from tracker is [x1, y1, x2, y2]
             const x1 = obj.bbox[0] * scaleX;
             const y1 = obj.bbox[1] * scaleY;
             const x2 = obj.bbox[2] * scaleX;
@@ -177,19 +203,33 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onS
                         THREAT LEVEL: {latestMetadata?.threat_label || 'NORMAL'}
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '0.5rem' }}>
-                        <span className="stat-label">Active Tracked Objects</span>
-                        <div className="tracked-objects-list">
-                            {latestMetadata?.tracked_objects.length === 0 && (
-                                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>No objects tracked</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '0.5rem', overflow: 'hidden' }}>
+                        <span className="stat-label">Detected Objects</span>
+                        <div className="tracked-objects-list" style={{ overflowY: 'auto' }}>
+                            {(!latestMetadata?.tracked_objects.length && !latestMetadata?.all_detections?.filter(d => !d.track).length) && (
+                                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>No objects detected</div>
                             )}
+                            
+                            {/* Tracked Objects */}
                             {latestMetadata?.tracked_objects.map(obj => (
-                                <div key={obj.id} className="tracked-item">
+                                <div key={`tracked-${obj.id}`} className="tracked-item">
                                     <div>
                                         <span className="tracked-id">#{obj.id}</span>
                                         <span className="tracked-class">{obj.class}</span>
                                     </div>
                                     <span className="tracked-conf">{(obj.confidence * 100).toFixed(0)}%</span>
+                                </div>
+                            ))}
+
+                            {/* Untracked Detections (weapons, fire, bags) */}
+                            {latestMetadata?.all_detections?.filter(d => !d.track).map((det, idx) => (
+                                <div key={`untracked-${idx}`} className="tracked-item">
+                                    <div>
+                                        <span className="tracked-class" style={{ color: (det.source === 'weapon' || det.class_name === 'fire') ? '#ef4444' : '#f59e0b', fontWeight: 600 }}>
+                                            {det.class_name.toUpperCase()}
+                                        </span>
+                                    </div>
+                                    <span className="tracked-conf">{(det.confidence * 100).toFixed(0)}%</span>
                                 </div>
                             ))}
                         </div>

@@ -16,11 +16,11 @@ interface AlertPopupProps {
 }
 
 const AlertPopup: React.FC<AlertPopupProps> = ({ alert, onDismiss }) => {
-    // Auto-dismiss after 8 seconds
+    // Auto-dismiss after 10 seconds
     useEffect(() => {
         const timer = setTimeout(() => {
             onDismiss(alert.id);
-        }, 8000);
+        }, 10000);
         return () => clearTimeout(timer);
     }, [alert.id, onDismiss]);
 

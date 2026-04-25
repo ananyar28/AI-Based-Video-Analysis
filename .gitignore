@@ -39,6 +39,9 @@ backend/env/
 backend/.venv/
 *.pt
 *.json
+# SQLite databases (live files locked by the running server)
+*.db
+*.sqlite3
 !package.json
 !tsconfig.json
 !package-lock.json

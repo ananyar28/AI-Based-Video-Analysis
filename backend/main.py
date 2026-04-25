@@ -638,12 +638,12 @@ def start_stream(
 @app.delete("/stream/{camera_id}")
 def stop_stream(camera_id: str, db: Session = Depends(get_db)):
     """Stop and clean up a live stream by camera_id."""
-    if camera_id not in active_streams:
-        raise HTTPException(status_code=404, detail=f"Stream '{camera_id}' not found.")
-
-    extractor = active_streams[camera_id]
-    extractor.stop()
-    del active_streams[camera_id]
+    extractor = active_streams.pop(camera_id, None)
+    if extractor:
+        extractor.stop()
+        logger.info(f"[Stream] Stopped '{camera_id}'")
+    else:
+        logger.info(f"[Stream] '{camera_id}' was already stopped or not in active streams.")
 
     # Update DB
     stream = db.query(models.Stream).filter(models.Stream.camera_id == camera_id).first()
@@ -652,7 +652,6 @@ def stop_stream(camera_id: str, db: Session = Depends(get_db)):
         stream.stopped_at = datetime.utcnow()
         db.commit()
 
-    logger.info(f"[Stream] Stopped '{camera_id}'")
     return {"camera_id": camera_id, "status": "stopped"}
 
 

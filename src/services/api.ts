@@ -116,6 +116,8 @@ export interface WSMetadataPayload {
     timestamp: number;
     threat_level: number;
     threat_label: string;
+    threat_reason: string;
+    detections: DetectionItem[];
     tracked_objects: TrackedObject[];
     events: EventItem[];
     resolution: { width: number; height: number };

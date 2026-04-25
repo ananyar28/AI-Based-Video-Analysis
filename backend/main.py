@@ -278,6 +278,7 @@ def _process_video(video_id: int, file_path: str):
                 timestamp=result.timestamp,
                 threat_level=result.threat_level,
                 threat_label=result.threat_label,
+                threat_reason=result.threat_reason,
                 detections=result.to_dict(),
             )
             db.add(db_frame)
@@ -289,6 +290,7 @@ def _process_video(video_id: int, file_path: str):
                     timestamp=result.timestamp,
                     threat_level=result.threat_level,
                     threat_label=result.threat_label,
+                    threat_reason=result.threat_reason,
                 )
                 db.add(db_alert)
                 
@@ -605,6 +607,8 @@ def start_stream(
             "timestamp": frame_data.timestamp,
             "threat_level": result.threat_level,
             "threat_label": result.threat_label,
+            "threat_reason": result.threat_reason,
+            "detections": result.to_dict()["object_detections"] + result.to_dict()["weapon_detections"] + result.to_dict()["fire_detections"],
             "tracked_objects": result.tracked_objects,
             "events": result.events,
             "resolution": {"width": width, "height": height}

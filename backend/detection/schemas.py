@@ -108,6 +108,7 @@ class FrameResult:
     timestamp: float
     threat_level: int
     threat_label: str
+    threat_reason: str = ""
     object_detections: List[Detection] = field(default_factory=list)
     weapon_detections: List[Detection] = field(default_factory=list)
     fire_detections: List[Detection] = field(default_factory=list)
@@ -136,6 +137,7 @@ class FrameResult:
             "timestamp":         self.timestamp,
             "threat_level":      self.threat_level,
             "threat_label":      self.threat_label,
+            "threat_reason":     self.threat_reason,
             "object_detections": det_list(self.object_detections),
             "weapon_detections": det_list(self.weapon_detections),
             "fire_detections":   det_list(self.fire_detections),

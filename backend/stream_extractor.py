@@ -255,6 +255,30 @@ class StreamExtractor:
         
         if frame is None:
             return None
+
+        # --- Draw Bounding Boxes on Proxy Stream (Burn-in) ---
+        # We draw the latest results if available
+        if hasattr(self, '_latest_result') and self._latest_result:
+            result = self._latest_result
+            
+            # Draw detections
+            for det in result.object_detections + result.weapon_detections + result.fire_detections:
+                x, y, w, h = map(int, det.bbox)
+                color = (0, 255, 0) # Green for objects
+                if det.source == "weapon": color = (0, 0, 255) # Red for weapons
+                if det.source == "fire": color = (0, 165, 255) # Orange for fire
+                
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                label = f"{det.class_name} {int(det.confidence * 100)}%"
+                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # Draw threat level indicator
+            t_color = (0, 255, 0)
+            if result.threat_level >= 4: t_color = (0, 0, 255)
+            elif result.threat_level >= 2: t_color = (0, 165, 255)
+            
+            cv2.putText(frame, f"AI Status: {result.threat_label}", (20, 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, t_color, 3)
             
         # Encode to JPEG (outside the lock to avoid blocking capture thread)
         success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -407,6 +431,7 @@ class StreamExtractor:
                 if runner is not None:
                     result = runner(frame_data)
                     self.frames_processed += 1
+                    self._latest_result = result # Save for proxy stream burn-in
 
                     # Call result hook if provided (e.g. to send via WebSocket)
                     if self.on_result:

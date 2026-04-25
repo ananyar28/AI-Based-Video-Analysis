@@ -147,19 +147,116 @@
     background: rgba(239, 68, 68, 0.3);
 }
 
-.connection-status {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(0,0,0,0.6);
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    color: white;
-    z-index: 20;
+.threat-reason {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.counts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+}
+
+.count-item {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 8px;
+    padding: 0.75rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.count-item.warning {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.2);
+}
+
+.count-item.error {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.2);
+}
+
+.count-val {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.count-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.tracked-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--surface-border);
+}
+
+.det-info {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 0.5rem;
+}
+
+.det-source {
+    font-size: 0.65rem;
+    font-weight: 800;
+    background: var(--accent-color);
+    color: white;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.det-source.weapon { background: var(--error); }
+.det-source.fire { background: #f97316; }
+
+.conf-bar-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 6px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.conf-bar {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.tracked-conf {
+    font-size: 0.7rem;
+    color: var(--accent-color);
+    position: absolute;
+    right: 2px;
+    top: -12px;
+    font-weight: bold;
+}
+
+.footer-stats {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 1rem;
+    border-top: 1px solid var(--surface-border);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.mini-stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
 }
 
 .status-dot {
@@ -167,6 +264,14 @@
     height: 8px;
     border-radius: 50%;
     background: gray;
+    animation: pulse 2s infinite;
 }
-.status-dot.connected { background: #10b981; }
+
+@keyframes pulse {
+    0% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.2); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+.status-dot.connected { background: #10b981; box-shadow: 0 0 5px #10b981; }
 .status-dot.error { background: #ef4444; }

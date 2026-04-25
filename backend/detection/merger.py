@@ -30,7 +30,7 @@ def _classify_threat(
     obj_dets: List[Detection],
     weapon_dets: List[Detection],
     fire_dets: List[Detection],
-) -> tuple[int, str]:
+) -> tuple[int, str, str]:
     """
     Determine the threat level for a frame based on what was detected.
 
@@ -38,7 +38,7 @@ def _classify_threat(
 
     Returns
     -------
-    (threat_level: int, threat_label: str)
+    (threat_level: int, threat_label: str, threat_reason: str)
     """
     has_person  = any(d.class_name == "person" for d in obj_dets)
     has_weapon  = len(weapon_dets) > 0
@@ -46,22 +46,25 @@ def _classify_threat(
 
     # Level 5 — EMERGENCY: all three present
     if has_fire and has_weapon and has_person:
-        return 5, THREAT_LEVELS[5]
+        return 5, THREAT_LEVELS[5], "Fire, weapon, and person detected simultaneously."
 
     # Level 4 — URGENT: weapon + person
     if has_weapon and has_person:
-        return 4, THREAT_LEVELS[4]
+        return 4, THREAT_LEVELS[4], "Person detected in possession of a weapon."
 
     # Level 3 — CRITICAL: weapon (no person confirmed)
     if has_weapon:
-        return 3, THREAT_LEVELS[3]
+        return 3, THREAT_LEVELS[3], f"Weapon ({weapon_dets[0].class_name}) detected in the area."
 
     # Level 2 — WARNING: fire or smoke
     if has_fire:
-        return 2, THREAT_LEVELS[2]
+        return 2, THREAT_LEVELS[2], "Fire or smoke detected in the frame."
 
     # Level 0 — NORMAL
-    return 0, THREAT_LEVELS[0]
+    if has_person:
+        return 0, THREAT_LEVELS[0], "Monitoring: Person(s) present, no threats detected."
+        
+    return 0, THREAT_LEVELS[0], "No significant objects or threats detected."
 
 
 def _split_trackable_alerts(
@@ -115,16 +118,18 @@ def merge_results(
     FrameResult with:
         - merged detections from all models
         - threat_level and threat_label
+        - threat_reason
         - trackable_objects split
         - alert_objects split
     """
-    threat_level, threat_label = _classify_threat(obj_dets, weapon_dets, fire_dets)
+    threat_level, threat_label, threat_reason = _classify_threat(obj_dets, weapon_dets, fire_dets)
     trackable, alerts = _split_trackable_alerts(obj_dets, weapon_dets, fire_dets)
 
     if threat_level >= 2:
         logger.info(
             f"[Merger] Frame {frame_data.frame_number} @ {frame_data.timestamp}s "
             f"| Threat: {threat_label} (Level {threat_level}) "
+            f"| Reason: {threat_reason} "
             f"| Objects: {len(obj_dets)} | Weapons: {len(weapon_dets)} | Fire: {len(fire_dets)}"
         )
 
@@ -133,6 +138,7 @@ def merge_results(
         timestamp=frame_data.timestamp,
         threat_level=threat_level,
         threat_label=threat_label,
+        threat_reason=threat_reason,
         object_detections=obj_dets,
         weapon_detections=weapon_dets,
         fire_detections=fire_dets,

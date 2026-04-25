@@ -45,6 +45,7 @@ class FrameResult(Base):
     timestamp    = Column(Float)                            # seconds from start
     threat_level = Column(Integer, default=0)
     threat_label = Column(String, default="NORMAL")
+    threat_reason = Column(String, nullable=True)
     detections   = Column(JSON)                             # full FrameResult.to_dict()
     created_at   = Column(DateTime, default=datetime.utcnow)
 
@@ -61,6 +62,7 @@ class Alert(Base):
     timestamp      = Column(Float)
     threat_level   = Column(Integer)
     threat_label   = Column(String)
+    threat_reason  = Column(String, nullable=True)
     frame_snapshot = Column(String, nullable=True)           # path to saved JPEG
     created_at     = Column(DateTime, default=datetime.utcnow)
 

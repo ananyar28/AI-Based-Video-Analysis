@@ -108,10 +108,27 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onS
         const scaleX = canvas.width / metadata.resolution.width;
         const scaleY = canvas.height / metadata.resolution.height;
 
-        // Draw tracked objects
+        // 1. Draw all detections (burned-in backend boxes are backup, these are high-res)
+        metadata.detections.forEach(det => {
+            const [x, y, w, h] = det.bbox;
+            const x1 = x * scaleX;
+            const y1 = y * scaleY;
+            const width = w * scaleX;
+            const height = h * scaleY;
+
+            let color = '#10b981'; // green
+            if (det.source === 'weapon') color = '#ef4444'; // red
+            if (det.source === 'fire') color = '#f97316'; // orange
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]); // Dashed line for raw detections
+            ctx.strokeRect(x1, y1, width, height);
+            ctx.setLineDash([]); // Reset
+        });
+
+        // 2. Draw tracked objects (solid lines, more prominent)
         metadata.tracked_objects.forEach(obj => {
-            // The bbox from tracker is [x, y, w, h] or [x1, y1, x2, y2]. 
-            // In tracker.py we returned [x1, y1, x2, y2]
             const x1 = obj.bbox[0] * scaleX;
             const y1 = obj.bbox[1] * scaleY;
             const x2 = obj.bbox[2] * scaleX;
@@ -119,10 +136,8 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onS
             const width = x2 - x1;
             const height = y2 - y1;
 
-            // Determine color based on class
-            let color = '#10b981'; // default green (person)
+            let color = '#10b981'; 
             if (obj.class === 'vehicle' || obj.class === 'car') color = '#3b82f6';
-            if (['bag', 'backpack', 'suitcase'].includes(obj.class)) color = '#f59e0b';
 
             ctx.strokeStyle = color;
             ctx.lineWidth = 3;
@@ -131,13 +146,28 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onS
             // Label
             ctx.fillStyle = color;
             const label = `${obj.class.toUpperCase()} #${obj.id} ${(obj.confidence * 100).toFixed(0)}%`;
-            ctx.font = '14px Arial';
+            ctx.font = 'bold 14px Inter, system-ui';
             const textWidth = ctx.measureText(label).width;
-            ctx.fillRect(x1, y1 - 20, textWidth + 10, 20);
+            ctx.fillRect(x1, y1 - 25, textWidth + 10, 25);
             ctx.fillStyle = '#fff';
-            ctx.fillText(label, x1 + 5, y1 - 5);
+            ctx.fillText(label, x1 + 5, y1 - 8);
         });
     };
+
+    // Calculate Counts
+    const getCounts = () => {
+        if (!latestMetadata) return { person: 0, weapon: 0, fire: 0, total: 0 };
+        const counts = { person: 0, weapon: 0, fire: 0, total: 0 };
+        latestMetadata.detections.forEach(d => {
+            if (d.class_name === 'person') counts.person++;
+            if (d.source === 'weapon') counts.weapon++;
+            if (d.source === 'fire') counts.fire++;
+            counts.total++;
+        });
+        return counts;
+    };
+
+    const counts = getCounts();
 
     return (
         <div className="dashboard-container">
@@ -168,30 +198,56 @@ const LiveStreamDashboard: React.FC<LiveStreamDashboardProps> = ({ cameraId, onS
 
                 {/* Live Stats Sidebar */}
                 <div className="stats-sidebar">
+                    <div className="stat-card main-stat">
+                        <span className="stat-label">AI Status</span>
+                        <div className={`threat-indicator threat-${latestMetadata?.threat_level || 0}`}>
+                            {latestMetadata?.threat_label || 'NORMAL'}
+                        </div>
+                        <p className="threat-reason">{latestMetadata?.threat_reason || 'Scanning for threats...'}</p>
+                    </div>
+
+                    <div className="counts-grid">
+                        <div className="count-item">
+                            <span className="count-val">{counts.person}</span>
+                            <span className="count-label">Humans</span>
+                        </div>
+                        <div className="count-item warning">
+                            <span className="count-val">{counts.weapon}</span>
+                            <span className="count-label">Weapons</span>
+                        </div>
+                        <div className="count-item error">
+                            <span className="count-val">{counts.fire}</span>
+                            <span className="count-label">Fire</span>
+                        </div>
+                    </div>
+
                     <div className="stat-card">
-                        <span className="stat-label">AI Frames Analyzed</span>
-                        <span className="stat-value">{framesAnalyzed}</span>
-                    </div>
-
-                    <div className={`threat-indicator threat-${latestMetadata?.threat_level || 0}`}>
-                        THREAT LEVEL: {latestMetadata?.threat_label || 'NORMAL'}
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '0.5rem' }}>
-                        <span className="stat-label">Active Tracked Objects</span>
+                        <span className="stat-label">Detections & Confidence</span>
                         <div className="tracked-objects-list">
-                            {latestMetadata?.tracked_objects.length === 0 && (
-                                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>No objects tracked</div>
+                            {latestMetadata?.detections.length === 0 && (
+                                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>No objects detected</div>
                             )}
-                            {latestMetadata?.tracked_objects.map(obj => (
-                                <div key={obj.id} className="tracked-item">
-                                    <div>
-                                        <span className="tracked-id">#{obj.id}</span>
-                                        <span className="tracked-class">{obj.class}</span>
+                            {latestMetadata?.detections.map((det, idx) => (
+                                <div key={idx} className="tracked-item">
+                                    <div className="det-info">
+                                        <span className={`det-source ${det.source}`}>{det.source.charAt(0).toUpperCase()}</span>
+                                        <span className="tracked-class">{det.class_name}</span>
                                     </div>
-                                    <span className="tracked-conf">{(obj.confidence * 100).toFixed(0)}%</span>
+                                    <div className="conf-bar-wrapper">
+                                        <div className="conf-bar" style={{ width: `${det.confidence * 100}%`, background: det.source === 'weapon' ? 'var(--error)' : 'var(--accent-color)' }} />
+                                        <span className="tracked-conf">{(det.confidence * 100).toFixed(0)}%</span>
+                                    </div>
                                 </div>
                             ))}
+                        </div>
+                    </div>
+
+                    <div className="footer-stats">
+                        <div className="mini-stat">
+                            <span>Frames: {framesAnalyzed}</span>
+                        </div>
+                        <div className="mini-stat">
+                            <span>FPS: 5.0</span>
                         </div>
                     </div>
 
